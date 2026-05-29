@@ -43,6 +43,10 @@ interface GameStoreState {
   targetMaxHp: number;
   targetName: string;
 
+  // Currency & Aggro
+  zeny: number;
+  targetAggro: { targetId: string; label: string; threat: number } | null;
+
   // NPC Interactions & Buffs
   npcDialogue: {
     npcId: string;
@@ -84,6 +88,8 @@ interface GameStoreState {
   setJoystickEnabled: (enabled: boolean) => void;
   setInputMode: (mode: 'touch_target' | 'joystick_aim') => void;
   toggleConfigPanel: () => void;
+  setZeny: (amount: number) => void;
+  setTargetAggro: (aggro: { targetId: string; label: string; threat: number } | null) => void;
   castSkill: (skillId: string) => void;
 
   setNpcDialogue: (dialogue: GameStoreState['npcDialogue']) => void;
@@ -144,6 +150,8 @@ export const useGameStore = create<GameStoreState>((set, get) => ({
   playerJobMaxExp: 80000,
   potCount: 15,
   headgear: 'bunny_band',
+  zeny: 5000,
+  targetAggro: null,
 
   inventory: [
     { id: 'red_potion', name: 'Red Potion', quantity: 15 },
@@ -293,7 +301,8 @@ export const useGameStore = create<GameStoreState>((set, get) => ({
       targetEntityId: id,
       targetName: name,
       targetHp: hp,
-      targetMaxHp: maxHp
+      targetMaxHp: maxHp,
+      targetAggro: null
     });
   },
 
@@ -396,6 +405,14 @@ export const useGameStore = create<GameStoreState>((set, get) => ({
       skillId: skillId,
       targetId: state.targetEntityId || undefined
     });
+  },
+
+  setZeny: (amount) => {
+    set({ zeny: amount });
+  },
+
+  setTargetAggro: (aggro) => {
+    set({ targetAggro: aggro });
   },
 
   setNpcDialogue: (dialogue) => {

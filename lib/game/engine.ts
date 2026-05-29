@@ -144,6 +144,9 @@ export class RagnarokEngine implements EntityLookup {
       }
     });
 
+    // Sync initial zeny from inventory to Zustand
+    this.context.store.setZeny(this.context.inventory.getState().zeny);
+
     gameEventBus.on('entity:damaged', (event) => {
       this.context.store.addCombatLog(`[Event] ${event.entityId} recibió ${event.damage} daño${event.isCrit ? ' (CRIT)' : ''}.`, 'system');
     });
@@ -161,6 +164,21 @@ export class RagnarokEngine implements EntityLookup {
 
     gameEventBus.on('combat:death', (event) => {
       this.context.store.addCombatLog(`[Combat Death] ${event.entityId} eliminado por ${event.killerId || 'desconocido'} en t=${event.timestamp}.`, 'system');
+    });
+
+    gameEventBus.on('combat:aggro', (event) => {
+      const store = this.context.store;
+      if (event.entityId === store.getTargetEntityId()) {
+        const label = event.targetId === this.playerEntity.id ? 'TÚ' : event.targetId;
+        store.setTargetAggro({ targetId: event.targetId, label, threat: event.totalThreat });
+      }
+    });
+
+    gameEventBus.on('combat:aggro_lost', (event) => {
+      const store = this.context.store;
+      if (event.entityId === store.getTargetEntityId()) {
+        store.setTargetAggro(null);
+      }
     });
   }
 

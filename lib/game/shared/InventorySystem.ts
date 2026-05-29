@@ -158,6 +158,10 @@ export class InventorySystem {
     return false;
   }
 
+  getItemDefinitionsMap(): Map<string, ItemDefinition> {
+    return this.itemDefinitions;
+  }
+
   // --- QUERY METHODS ---
 
   getItemCount(itemId: string): number {

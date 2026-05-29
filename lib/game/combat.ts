@@ -396,6 +396,8 @@ export class CombatSystem {
     });
 
     const zenyDrop = mob.type === 'boss_mvp' ? 5000 : (mob.mobType === 'poring' ? 10 : mob.mobType === 'poporing' ? 25 : 100);
+    this.context.inventory.addZeny(zenyDrop);
+    store.setZeny(this.context.inventory.getState().zeny);
     store.addCombatLog(`[Zeny] +${zenyDrop}z`, 'loot');
   }
 

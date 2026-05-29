@@ -37,6 +37,12 @@ export interface GameStoreAPI {
   // Target management
   setTarget(id: string | null, name?: string, hp?: number, maxHp?: number): void;
   updateTargetHp(hp: number): void;
+  getTargetEntityId(): string | null;
+  setTargetAggro(aggro: { targetId: string; label: string; threat: number } | null): void;
+
+  // Currency
+  setZeny(amount: number): void;
+  getZeny(): number;
 
   // Legacy Inventory (for backward compatibility)
   updateInventory(updater: (inventory: { id: string; name: string; quantity: number }[]) => { id: string; name: string; quantity: number }[]): void;
@@ -128,6 +134,8 @@ export function createGameContext(): GameContext {
     // Target management
     setTarget: (id, name, hp, maxHp) => getStore().setTarget(id, name, hp, maxHp),
     updateTargetHp: (hp) => getStore().updateTargetHp(hp),
+    getTargetEntityId: () => getStore().targetEntityId,
+    setTargetAggro: (aggro) => getStore().setTargetAggro(aggro),
 
     // Legacy Inventory (for backward compatibility)
     updateInventory: (updater) => {
@@ -142,6 +150,10 @@ export function createGameContext(): GameContext {
     isJoystickEnabled: () => getStore().isJoystickEnabled,
     getJoystickState: () => getStore().joystick,
     updateJoystick: (joystick) => getStore().updateJoystick(joystick),
+
+    // Currency
+    setZeny: (amount) => getStore().setZeny(amount),
+    getZeny: () => getStore().zeny,
 
     // EXP
     addExp: (base, job) => getStore().addExp(base, job),

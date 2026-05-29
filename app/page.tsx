@@ -13,6 +13,7 @@ import { useGameStore } from '../lib/game/state';
 import { RagnarokEngine } from '../lib/game/engine';
 import { JobClass, HeadgearId } from '../lib/game/types';
 import { InventoryPanel } from './components/InventoryPanel';
+import { CharacterStats } from '../lib/game/types';
 import { createGameContext } from '../lib/game/core/GameContext';
 
 export default function GamePage() {
@@ -26,6 +27,7 @@ export default function GamePage() {
   const [currentTime, setCurrentTime] = useState(0);
   const [activeSettingsTab, setActiveSettingsTab] = useState<'controls' | 'report'>('controls');
   const [isInventoryOpen, setIsInventoryOpen] = useState(false);
+  const [equipmentBonuses, setEquipmentBonuses] = useState<Partial<CharacterStats>>({});
   const [gameContext] = useState(() => createGameContext());
 
   // High-precision animation timer frame ticker (drives ultra-smooth radial cooldown covers)
@@ -77,6 +79,27 @@ export default function GamePage() {
       }
     };
   }, [mounted]);
+
+  // Keyboard shortcut to toggle inventory (I key)
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'i' || e.key === 'I') {
+        // Don't toggle if typing in an input
+        if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
+        e.preventDefault();
+        setIsInventoryOpen((prev) => !prev);
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, []);
+
+  // Compute fresh equipment bonuses each time inventory opens
+  useEffect(() => {
+    if (isInventoryOpen) {
+      setEquipmentBonuses(gameContext.equipment.calculateStatBonuses());
+    }
+  }, [isInventoryOpen]);
 
   // Synchronize Job stats in engine when switched in UI
   useEffect(() => {
@@ -203,6 +226,19 @@ export default function GamePage() {
                     className="h-full rounded-full bg-linear-to-r from-red-500 to-rose-600 shadow-inner"
                   />
                 </div>
+
+                {/* Threat / Aggro indicator */}
+                {store.targetAggro && (
+                  <div className="flex items-center space-x-1 mt-1.5">
+                    <span className="text-[9px]">🔥</span>
+                    <span className="text-[9px] font-mono text-amber-400 font-semibold">
+                      Aggro: {store.targetAggro.label}
+                    </span>
+                    <span className="text-[8px] font-mono text-amber-600">
+                      ({store.targetAggro.threat.toLocaleString()})
+                    </span>
+                  </div>
+                )}
               </div>
             </motion.div>
           )}
@@ -691,7 +727,9 @@ export default function GamePage() {
         onClose={() => setIsInventoryOpen(false)}
         inventorySlots={gameContext.inventory.getSlots()}
         equipmentState={gameContext.equipment.getState() as any}
-        itemDefinitions={gameContext.inventory['itemDefinitions']}
+        itemDefinitions={gameContext.inventory.getItemDefinitionsMap()}
+        equipmentBonuses={equipmentBonuses}
+        zeny={store.zeny}
         onUseItem={(slotIndex) => {
           const slot = gameContext.inventory.getSlots()[slotIndex];
           if (slot) {
