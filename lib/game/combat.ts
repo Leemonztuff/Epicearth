@@ -20,7 +20,7 @@ export class CombatSystem {
   private playerEntity: Entity;
   private monsters: Entity[];
   private context: GameContext;
-  private projectiles: Projectile[] = [];
+  private delayedActions: { fn: () => void; triggerTime: number }[] = [];
   private activeCast: {
     skillId: string;
     skillName: string;
@@ -55,8 +55,16 @@ export class CombatSystem {
   }
 
   getActiveCast() { return this.activeCast; }
-  getProjectiles() { return this.projectiles; }
   getBattleModeEndTime() { return this.battleModeEndTime; }
+
+  tickDelayedActions(now: number) {
+    for (let i = this.delayedActions.length - 1; i >= 0; i--) {
+      if (now >= this.delayedActions[i].triggerTime) {
+        this.delayedActions[i].fn();
+        this.delayedActions.splice(i, 1);
+      }
+    }
+  }
 
   cancelCast(reason: 'movement' | 'damage' | 'manual' = 'manual'): void {
     if (!this.activeCast) return;
@@ -202,6 +210,8 @@ export class CombatSystem {
             targetMob.state = 'hit';
             targetMob.hitRecoveryEndTime = now + 400;
 
+            gameEventBus.emit('entity:damaged', { entityId: targetMob.id, damage, isCrit, sourceId: this.playerEntity.id });
+
             this.onFloatingText(
               isCrit ? `★ ${damage} ★` : `${damage}`,
               isCrit ? '#f59e0b' : '#ef4444',
@@ -215,6 +225,7 @@ export class CombatSystem {
             store.updateTargetHp(targetMob.currentHp);
 
             if (targetMob.currentHp <= 0) {
+              gameEventBus.emit('entity:died', { entityId: targetMob.id, killerId: this.playerEntity.id });
               this.reapMonsterRewards(targetMob);
             }
           }
@@ -260,6 +271,7 @@ export class CombatSystem {
     if (skillId === 'heal') {
       const healAmt = Math.floor(this.playerEntity.maxHp * 0.35 + stats.int * 14);
       this.playerEntity.currentHp = Math.min(this.playerEntity.maxHp, this.playerEntity.currentHp + healAmt);
+      gameEventBus.emit('entity:healed', { entityId: this.playerEntity.id, amount: healAmt });
       this.onFloatingText(`+${healAmt}`, '#10b981', 1.8, this.playerEntity.x, 2.5, this.playerEntity.z);
       store.addCombatLog(`Lanzado Heal: +${healAmt} HP recuperados.`, 'heal');
       gameAudio.playHeal();
@@ -283,9 +295,10 @@ export class CombatSystem {
       if (skillId === 'double_strafe') {
         const halfDmg = Math.floor(damage / 2);
         this.onProjectileSpawn('arrow', this.playerEntity, targetMob, halfDmg, isCrit);
-        setTimeout(() => {
-          this.onProjectileSpawn('arrow', this.playerEntity, targetMob, halfDmg, isCrit);
-        }, 180);
+        this.delayedActions.push({
+          fn: () => this.onProjectileSpawn('arrow', this.playerEntity, targetMob, halfDmg, isCrit),
+          triggerTime: performance.now() + 180
+        });
         store.addCombatLog(`¡Lanzado ${skill.name}! Disparando flechas de proyectil en ráfaga doble...`, 'skill');
       } else if (skillId === 'holy_light') {
         this.onProjectileSpawn('holy_light', this.playerEntity, targetMob, damage, isCrit);
@@ -294,6 +307,8 @@ export class CombatSystem {
         targetMob.currentHp = Math.max(0, targetMob.currentHp - damage);
         targetMob.state = 'hit';
         targetMob.hitRecoveryEndTime = now + 350;
+
+        gameEventBus.emit('entity:damaged', { entityId: targetMob.id, damage, isCrit, sourceId: this.playerEntity.id });
 
         this.onFloatingText(
           isCrit ? `★ CRIT ${damage} ★` : `${damage}`,
@@ -308,6 +323,7 @@ export class CombatSystem {
         store.updateTargetHp(targetMob.currentHp);
 
         if (targetMob.currentHp <= 0) {
+          gameEventBus.emit('entity:died', { entityId: targetMob.id, killerId: this.playerEntity.id });
           this.reapMonsterRewards(targetMob);
         }
       }
@@ -321,6 +337,8 @@ export class CombatSystem {
     target.currentHp = Math.max(0, target.currentHp - proj.damage);
     target.state = 'hit';
     target.hitRecoveryEndTime = Date.now() + 180;
+
+    gameEventBus.emit('entity:damaged', { entityId: target.id, damage: proj.damage, isCrit: proj.isCrit, sourceId: proj.ownerEntityId });
 
     const isMvp = target.type === 'boss_mvp';
     const numColor = proj.isCrit ? '#fdeb3a' : (target.type === 'player' ? '#f43f5e' : '#38bdf8');
@@ -338,6 +356,7 @@ export class CombatSystem {
     store.updateTargetHp(target.currentHp);
 
     if (target.currentHp <= 0 && target.type !== 'player') {
+      gameEventBus.emit('entity:died', { entityId: target.id, killerId: this.playerEntity.id });
       this.reapMonsterRewards(target);
     }
   }
@@ -371,6 +390,7 @@ export class CombatSystem {
 
       this.playerEntity.currentHp = updatedStats.maxHp;
       this.playerEntity.currentSp = updatedStats.maxSp;
+      gameEventBus.emit('entity:healed', { entityId: this.playerEntity.id, amount: updatedStats.maxHp });
       store.setPlayerHpSp(this.playerEntity.currentHp, this.playerEntity.currentSp);
     } else {
       store.addCombatLog(`Matas a [${mob.name}]. +${expBase} EXP base, +${expJob} EXP job.`, 'system');
@@ -408,41 +428,4 @@ export class CombatSystem {
     return drops;
   }
 
-  tickProjectiles(dt: number) {
-    const tickScale = dt * 60.0;
-
-    for (let i = this.projectiles.length - 1; i >= 0; i--) {
-      const proj = this.projectiles[i];
-      let target: Entity | undefined;
-      if (this.playerEntity.id === proj.targetEntityId) {
-        target = this.playerEntity;
-      } else {
-        target = this.monsters.find(m => m.id === proj.targetEntityId);
-      }
-
-      const speedScale = proj.speed * tickScale;
-
-      if (!target || target.currentHp <= 0 || target.state === 'death') {
-        proj.y -= 0.15 * speedScale;
-        if (proj.y <= 0) this.projectiles.splice(i, 1);
-        continue;
-      }
-
-      const targetHeightOffset = target.type === 'boss_mvp' ? 1.6 : 0.85;
-      const tY = target.y + targetHeightOffset;
-      const pdx = target.x - proj.x;
-      const pdy = tY - proj.y;
-      const pdz = target.z - proj.z;
-      const pdist = Math.sqrt(pdx * pdx + pdy * pdy + pdz * pdz);
-
-      if (pdist < speedScale * 1.25) {
-        this.impactProjectile(proj, target);
-        this.projectiles.splice(i, 1);
-      } else {
-        proj.x += (pdx / pdist) * speedScale;
-        proj.y += (pdy / pdist) * speedScale;
-        proj.z += (pdz / pdist) * speedScale;
-      }
-    }
-  }
 }

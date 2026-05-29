@@ -1,44 +1,49 @@
-import { Entity, Projectile, GroundItem, CharacterStats, HeadgearId, JobClass, Skill } from '../types';
-import { useGameStore } from '../state';
+import { Entity, Projectile, GroundItem, CharacterStats } from '../types';
 import { StateProvider, StateChangeHandler, StateChangeEvent } from '../core/StateProvider';
 
-// ============================================================================
-// LOCAL STATE PROVIDER - Implementación local del StateProvider
-// ============================================================================
-// Implementa la interfaz StateProvider usando useGameStore (Zustand).
-// Esta es la implementación para single-player / client-side prediction.
-// Futura implementación: NetworkStateProvider (recibe snapshots del servidor).
-// ============================================================================
+export interface LocalStateProviderInit {
+  getPlayerEntity: () => Entity;
+  getMonsters: () => readonly Entity[];
+  getNpcs: () => readonly Entity[];
+  getProjectiles: () => readonly Projectile[];
+  getGroundItems: () => readonly GroundItem[];
+  store: {
+    getStats(): CharacterStats;
+    setPlayerHpSp(hp: number, sp: number): void;
+    updateStats(stats: Partial<CharacterStats>): void;
+  };
+}
 
 export class LocalStateProvider implements StateProvider {
   private changeHandlers: StateChangeHandler[] = [];
+  private state: LocalStateProviderInit | null = null;
 
-  // --- Entity Queries ---
+  init(state: LocalStateProviderInit): void {
+    this.state = state;
+  }
 
   getEntity(id: string): Entity | undefined {
-    // Para entidades del mundo, necesitamos acceso al engine
-    // Por ahora retornamos undefined - será implementado con worldRuntime
-    return undefined;
+    if (!this.state) return undefined;
+    if (this.state.getPlayerEntity().id === id) return this.state.getPlayerEntity();
+    return [...this.state.getMonsters(), ...this.state.getNpcs()].find(e => e.id === id);
   }
 
   getEntities(): Entity[] {
-    return [];
+    if (!this.state) return [];
+    return [this.state.getPlayerEntity(), ...this.state.getMonsters(), ...this.state.getNpcs()];
   }
 
   getMonsters(): Entity[] {
-    return [];
+    return this.state?.getMonsters() as Entity[] || [];
   }
 
   getNpcs(): Entity[] {
-    return [];
+    return this.state?.getNpcs() as Entity[] || [];
   }
 
   getPlayerEntity(): Entity | undefined {
-    // El player entity se maneja en engine.ts por ahora
-    return undefined;
+    return this.state?.getPlayerEntity();
   }
-
-  // --- Entity Mutations (via events) ---
 
   updateEntity(id: string, delta: Partial<Entity>): void {
     this.emitChange({ type: 'entity_updated', entityId: id, delta });
@@ -52,63 +57,58 @@ export class LocalStateProvider implements StateProvider {
     this.emitChange({ type: 'entity_removed', entityId: id });
   }
 
-  // --- Projectile Queries ---
-
   getProjectiles(): Projectile[] {
-    return [];
+    return this.state?.getProjectiles() as Projectile[] || [];
   }
 
-  addProjectile(proj: Projectile): void {
-    // Será implementado con worldRuntime
+  addProjectile(_proj: Projectile): void {
+    // Handled by ProjectileSystem
   }
 
-  removeProjectile(id: string): void {
-    // Será implementado con worldRuntime
+  removeProjectile(_id: string): void {
+    // Handled by ProjectileSystem
   }
-
-  // --- Ground Items ---
 
   getGroundItems(): GroundItem[] {
-    return [];
+    return this.state?.getGroundItems() as GroundItem[] || [];
   }
 
-  addGroundItem(item: GroundItem): void {
-    // Será implementado con worldRuntime
+  addGroundItem(_item: GroundItem): void {
+    // Handled by LootSystem
   }
 
-  removeGroundItem(id: string): void {
-    // Será implementado con worldRuntime
+  removeGroundItem(_id: string): void {
+    // Handled by LootSystem
   }
-
-  // --- Player-specific ---
 
   getPlayerState() {
-    const store = useGameStore.getState();
+    const s = this.state;
+    if (!s) return {} as any;
+    const entity = s.getPlayerEntity();
+    const stats = s.store.getStats();
     return {
-      entity: {} as Entity, // Será inyectado desde engine
-      stats: store.stats,
-      jobClass: store.jobClass,
-      headgear: store.headgear,
-      currentHp: store.currentHp,
-      currentSp: store.currentSp,
-      baseExp: store.playerBaseExp,
-      baseMaxExp: store.playerBaseMaxExp,
-      jobExp: store.playerJobExp,
-      jobMaxExp: store.playerJobMaxExp,
-      potCount: store.potCount,
-      skills: store.skills
+      entity,
+      stats,
+      jobClass: (entity as any)?.job || 'Lord Knight',
+      headgear: 'none' as const,
+      currentHp: entity.currentHp,
+      currentSp: entity.currentSp,
+      baseExp: 0,
+      baseMaxExp: 0,
+      jobExp: 0,
+      jobMaxExp: 0,
+      potCount: 0,
+      skills: []
     };
   }
 
   updatePlayerStats(stats: Partial<CharacterStats>): void {
-    useGameStore.getState().updateStats(stats);
+    this.state?.store.updateStats(stats);
   }
 
   setPlayerHpSp(hp: number, sp: number): void {
-    useGameStore.getState().setPlayerHpSp(hp, sp);
+    this.state?.store.setPlayerHpSp(hp, sp);
   }
-
-  // --- Lifecycle ---
 
   onStateChange(handler: StateChangeHandler): () => void {
     this.changeHandlers.push(handler);
@@ -119,9 +119,8 @@ export class LocalStateProvider implements StateProvider {
 
   clear(): void {
     this.changeHandlers = [];
+    this.state = null;
   }
-
-  // --- Internal ---
 
   private emitChange(event: StateChangeEvent): void {
     this.changeHandlers.forEach(handler => {

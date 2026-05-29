@@ -1,15 +1,16 @@
 import * as THREE from 'three';
-import { GameRenderer } from './renderer';
 import { gameAudio } from './audio';
 import { WorldRuntime } from './worldRuntime';
 import { InputHandler, EntityLookup } from './input';
 import { CombatSystem } from './combat';
 import { NpcSystem } from './npc';
 import { EntitySpawner } from './spawner';
-import { EffectsSystem } from './effects';
 import { PlayerController } from './client/PlayerController';
-import { Entity, GroundItem, HeadgearId, Projectile } from './types';
+import { RendererBridge } from './client/RendererBridge';
+import { LocalStateProvider } from './client/LocalStateProvider';
+import { Entity, GroundItem, Projectile } from './types';
 import { GameContext, createGameContext } from './core/GameContext';
+import { gameEventBus } from './core/EventBus';
 
 // ============================================================================
 // RAGNAROK ENGINE - ORQUESTADOR PRINCIPAL
@@ -31,12 +32,14 @@ export class RagnarokEngine implements EntityLookup {
 
   // Core Systems
   private worldRuntime!: WorldRuntime;
-  private gameRenderer!: GameRenderer;
+  private rendererBridge!: RendererBridge;
   private inputHandler!: InputHandler;
   private combatSystem!: CombatSystem;
   private npcSystem!: NpcSystem;
-  private effectsSystem!: EffectsSystem;
   private playerController!: PlayerController;
+
+  // State Provider (for future networking swap)
+  private stateProvider: LocalStateProvider;
 
   // Game Context
   private context: GameContext;
@@ -47,36 +50,29 @@ export class RagnarokEngine implements EntityLookup {
   private npcs: Entity[] = [];
   private groundItems: GroundItem[] = [];
 
-  // Visual Mapping
-  private entityMeshes: Record<string, THREE.Sprite> = {};
-  private groundItemMeshes: Record<string, THREE.Mesh> = {};
-  private projectileMeshes: Record<string, THREE.Object3D> = {};
-
   // Simulation
   private accumulator = 0;
   private readonly fixedTimeStep = 1 / 60;
   private screenShakeIntensity = 0;
   private interactingNpcId: string | null = null;
 
-  // EntityLookup implementation
+  // EntityLookup implementation (delegated to RendererBridge)
   getCamera(): THREE.PerspectiveCamera {
-    return this.camera;
+    return this.rendererBridge.getCamera();
   }
 
   getEntitySprite(entityId: string): THREE.Sprite | undefined {
-    return this.entityMeshes[entityId];
+    return this.rendererBridge.getEntitySprite(entityId);
   }
 
   getSpriteEntityId(sprite: THREE.Sprite): string | undefined {
-    for (const [id, s] of Object.entries(this.entityMeshes)) {
-      if (s === sprite) return id;
-    }
-    return undefined;
+    return this.rendererBridge.getSpriteEntityId(sprite);
   }
 
   constructor(container: HTMLDivElement) {
     this.container = container;
     this.context = createGameContext();
+    this.stateProvider = new LocalStateProvider();
     this.initThree();
     this.initSystems();
     this.initWorld();
@@ -133,13 +129,12 @@ export class RagnarokEngine implements EntityLookup {
 
   // --- 2. SYSTEM INITIALIZATION ---
   private initSystems() {
-    this.gameRenderer = new GameRenderer(this.scene);
-    this.effectsSystem = new EffectsSystem(this.scene);
-
-    this.effectsSystem.setMeshSpawners({
-      spawnEffectMesh: (type, x, z, scale) => this.gameRenderer.createSkillVisualMesh(type, x, z, scale),
-      spawnTouchMesh: (data) => this.gameRenderer.spawnTouchIndicator(data)
+    this.rendererBridge = new RendererBridge({
+      scene: this.scene,
+      camera: this.camera,
+      renderer: this.renderer
     });
+    this.rendererBridge.setEffectsMeshSpawners();
 
     this.worldRuntime = new WorldRuntime(this.context);
     this.worldRuntime.setCallbacks({
@@ -147,11 +142,19 @@ export class RagnarokEngine implements EntityLookup {
         if (action === 'item_bounce') gameAudio.playItemPickup();
       }
     });
+
+    gameEventBus.on('entity:damaged', (event) => {
+      this.context.store.addCombatLog(`[Event] ${event.entityId} recibió ${event.damage} daño${event.isCrit ? ' (CRIT)' : ''}.`, 'system');
+    });
+
+    gameEventBus.on('entity:died', (event) => {
+      this.context.store.addCombatLog(`[Event] ${event.entityId} ha sido eliminado por ${event.killerId || 'desconocido'}.`, 'system');
+    });
   }
 
   // --- 3. WORLD SETUP ---
   private initWorld() {
-    this.gameRenderer.createGroundMap();
+    this.rendererBridge.initGroundMap();
 
     const store = this.context.store;
     this.playerEntity = EntitySpawner.createPlayer(store.getJobClass(), store.getStats());
@@ -175,8 +178,8 @@ export class RagnarokEngine implements EntityLookup {
       context: this.context
     });
     this.combatSystem.setCallbacks({
-      onFloatingText: (text, color, scale, x, y, z) => this.effectsSystem.spawnFloatingText(text, color, scale, x, y, z),
-      onEffectSpawn: (type, x, z) => this.effectsSystem.spawnEffect(type, x, z),
+      onFloatingText: (text, color, scale, x, y, z) => this.rendererBridge.spawnFloatingText(text, color, scale, x, y, z),
+      onEffectSpawn: (type, x, z) => this.rendererBridge.spawnEffect(type, x, z),
       onProjectileSpawn: (type, owner, target, damage, isCrit) => this.worldRuntime.spawnProjectile(type, owner, target, damage, isCrit),
       onScreenShake: (intensity) => { this.screenShakeIntensity = intensity; }
     });
@@ -194,7 +197,7 @@ export class RagnarokEngine implements EntityLookup {
       monsters: this.monsters,
       npcs: this.npcs,
       combatSystem: this.combatSystem,
-      effectsSystem: this.effectsSystem,
+      effectsSystem: this.rendererBridge.getEffectsSystem(),
       context: this.context
     });
     this.playerController.setCallbacks({
@@ -208,8 +211,8 @@ export class RagnarokEngine implements EntityLookup {
       context: this.context
     });
     this.npcSystem.setCallbacks({
-      onEffectSpawn: (type, x, z) => this.effectsSystem.spawnEffect(type, x, z),
-      onClassChange: (job) => this.gameRenderer.createEntityTexture(this.playerEntity, store.getHeadgear())
+      onEffectSpawn: (type, x, z) => this.rendererBridge.spawnEffect(type, x, z),
+      onClassChange: (job) => this.rendererBridge.updateEntityBillboard(this.playerEntity, store.getHeadgear())
     });
 
     // Init Input Handler (pass engine as EntityLookup)
@@ -228,7 +231,19 @@ export class RagnarokEngine implements EntityLookup {
       onNpcInteract: (npc) => this.handleNpcInteract(npc)
     });
 
-    this.updateBillboards();
+    this.stateProvider.init({
+      getPlayerEntity: () => this.playerEntity,
+      getMonsters: () => this.monsters,
+      getNpcs: () => this.npcs,
+      getProjectiles: () => this.worldRuntime.getProjectiles() as Projectile[],
+      getGroundItems: () => this.groundItems,
+      store: {
+        getStats: () => store.getStats(),
+        setPlayerHpSp: (hp, sp) => store.setPlayerHpSp(hp, sp),
+        updateStats: (stats) => store.updateStats(stats)
+      }
+    });
+
   }
 
   // --- 5. MAIN UPDATE LOOP ---
@@ -256,8 +271,9 @@ export class RagnarokEngine implements EntityLookup {
     const store = this.context.store;
     const tickScale = dt * 60;
 
-    // 1. Combat systems (casting, auto-attack)
+    // 1. Combat systems (casting, auto-attack, delayed actions)
     this.combatSystem.tickActiveCasting(dt);
+    this.combatSystem.tickDelayedActions(now);
     this.combatSystem.tickAutoCombat(now, dt);
 
     // 2. World Runtime update (AI, projectiles, buffs, regen, loot)
@@ -298,103 +314,30 @@ export class RagnarokEngine implements EntityLookup {
     }
 
     // Update effects
-    this.effectsSystem.update(delta, this.playerEntity.targetEntityId, (id) => {
+    this.rendererBridge.updateEffects(delta, this.playerEntity.targetEntityId, (id) => {
       const mob = this.monsters.find(m => m.id === id);
       return mob ? { x: mob.x, z: mob.z } : null;
     });
 
-    // Update billboards
-    this.updateBillboards();
+    // Update entity billboards
+    const store = this.context.store;
+    this.rendererBridge.updateEntityBillboard(this.playerEntity, store.getHeadgear());
+    this.monsters.forEach(m => this.rendererBridge.updateEntityBillboard(m, 'none'));
+    this.npcs.forEach(n => this.rendererBridge.updateEntityBillboard(n, 'none'));
+
+    // Update ground items
+    this.groundItems.forEach(item => {
+      this.rendererBridge.updateGroundItem(item);
+    });
+
+    // Update projectiles
+    const projectiles = this.worldRuntime.getProjectiles();
+    projectiles.forEach(proj => this.rendererBridge.updateProjectile(proj));
+    this.rendererBridge.cleanupProjectileMeshes(new Set(projectiles.map(p => p.id)));
 
     // Camera follow
-    const shakeX = (Math.random() - 0.5) * this.screenShakeIntensity * 3.5;
-    const shakeY = (Math.random() - 0.5) * this.screenShakeIntensity * 3.5;
-    this.camera.position.set(
-      this.playerEntity.x + shakeX,
-      this.playerEntity.y + 16 + shakeY,
-      this.playerEntity.z + 22
-    );
-    this.camera.lookAt(this.playerEntity.x, this.playerEntity.y + 0.8, this.playerEntity.z);
-
-    this.renderer.render(this.scene, this.camera);
-  }
-
-  // --- 7. BILLBOARD RENDERING ---
-  private updateBillboards() {
-    const store = this.context.store;
-    this.updateSingleEntityBillboard(this.playerEntity, store.getHeadgear());
-    this.monsters.forEach(m => this.updateSingleEntityBillboard(m, 'none'));
-    this.npcs.forEach(n => this.updateSingleEntityBillboard(n, 'none'));
-
-    // Ground items
-    this.groundItems.forEach(item => {
-      const mesh = this.groundItemMeshes[item.id];
-      if (mesh) {
-        if (item.velY !== undefined) {
-          mesh.position.set(item.x, item.y, item.z);
-        } else {
-          mesh.position.set(item.x, 0.22 + Math.abs(Math.sin(performance.now() * 0.005)) * 0.18, item.z);
-        }
-        mesh.rotation.y += 0.015;
-      }
-    });
-
-    // Projectiles
-    const projectiles = this.worldRuntime.getProjectiles();
-    projectiles.forEach((proj: Projectile) => {
-      let mesh = this.projectileMeshes[proj.id];
-      if (!mesh) {
-        mesh = (this.gameRenderer as any).spawnProjectileMesh(proj.type, proj.x, proj.y, proj.z);
-        this.projectileMeshes[proj.id] = mesh;
-      }
-      mesh.position.set(proj.x, proj.y, proj.z);
-    });
-
-    // Cleanup projectile meshes
-    Object.keys(this.projectileMeshes).forEach(key => {
-      if (!projectiles.some((p: Projectile) => p.id === key)) {
-        const mesh = this.projectileMeshes[key];
-        if (mesh) {
-          this.scene.remove(mesh);
-          mesh.traverse((node: any) => {
-            if (node.geometry) node.geometry.dispose();
-            if (node.material) {
-              if (Array.isArray(node.material)) node.material.forEach((m: any) => m.dispose());
-              else node.material.dispose();
-            }
-          });
-        }
-        delete this.projectileMeshes[key];
-      }
-    });
-  }
-
-  private updateSingleEntityBillboard(entity: Entity, headgear: HeadgearId) {
-    let sprite = this.entityMeshes[entity.id];
-
-    if (!sprite) {
-      const tex = this.gameRenderer.createEntityTexture(entity, headgear);
-      if (!tex) return;
-
-      const mat = new THREE.SpriteMaterial({ map: tex, transparent: true, shadowSide: THREE.DoubleSide });
-      sprite = new THREE.Sprite(mat);
-
-      const isBoss = entity.type === 'boss_mvp';
-      const scaleFactor = isBoss ? 4.9 : (entity.mobType === 'pecopeco' ? 2.5 : (entity.mobType ? 1.8 : 2.5));
-      sprite.scale.set(scaleFactor, scaleFactor, 1);
-
-      this.scene.add(sprite);
-      this.entityMeshes[entity.id] = sprite;
-    } else {
-      const tex = this.gameRenderer.createEntityTexture(entity, headgear);
-      if (tex) {
-        sprite.material.map?.dispose();
-        sprite.material.map = tex;
-        sprite.material.needsUpdate = true;
-      }
-    }
-
-    sprite.position.set(entity.x, entity.y + (entity.type === 'boss_mvp' ? 2.0 : 0.9), entity.z);
+    this.rendererBridge.updateCamera(this.playerEntity, this.screenShakeIntensity);
+    this.rendererBridge.render();
   }
 
   // --- 8. NPC INTERACTION ---
@@ -403,7 +346,7 @@ export class RagnarokEngine implements EntityLookup {
     const dialogue = this.npcSystem.openDialogue(npc);
     if (dialogue) {
       store.setNpcDialogue(dialogue);
-      this.effectsSystem.spawnTouchIndicator(npc.x, npc.z, 'target');
+      this.rendererBridge.spawnTouchIndicator(npc.x, npc.z, 'target');
       store.addCombatLog(`Caminando hacia ${npc.name}...`, 'system');
     }
   }
@@ -443,7 +386,7 @@ export class RagnarokEngine implements EntityLookup {
     window.removeEventListener('resize', this.handleResize);
     if (this.renderer) this.renderer.dispose();
     this.worldRuntime.destroy();
-    this.effectsSystem.destroy();
+    this.rendererBridge.destroy();
     this.inputHandler.destroy();
   }
 }

@@ -1,5 +1,6 @@
 import { Entity } from '../types';
 import { GameContext } from '../core/GameContext';
+import { gameEventBus } from '../core/EventBus';
 
 // ============================================================================
 // REGEN SYSTEM - Regeneración de HP/SP
@@ -33,10 +34,15 @@ export class RegenSystem {
 
     // HP regen basado en VIT
     const hpRegenRate = (0.04 + stats.vit * 0.011) * tickScale;
+    const prevHp = this.playerEntity.currentHp;
     this.playerEntity.currentHp = Math.min(
       this.playerEntity.maxHp,
       this.playerEntity.currentHp + hpRegenRate
     );
+    const hpRestored = this.playerEntity.currentHp - prevHp;
+    if (hpRestored > 0) {
+      gameEventBus.emit('entity:healed', { entityId: this.playerEntity.id, amount: Math.round(hpRestored) });
+    }
 
     // SP regen basado en INT
     const spRegenRate = (0.018 + stats.int * 0.006) * tickScale;
