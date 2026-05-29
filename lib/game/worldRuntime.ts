@@ -5,6 +5,8 @@ import { MonsterAI } from './server/MonsterAI';
 import { RegenSystem } from './shared/RegenSystem';
 import { ProjectileSystem } from './shared/ProjectileSystem';
 import { CooldownSystem } from './shared/CooldownSystem';
+import { BuffSystem } from './shared/BuffSystem';
+import { LootSystem } from './shared/LootSystem';
 import { gameEventBus } from './core/EventBus';
 
 // ============================================================================
@@ -19,8 +21,8 @@ import { gameEventBus } from './core/EventBus';
 // - RegenSystem: Regeneración HP/SP
 // - ProjectileSystem: Física de proyectiles
 // - CooldownSystem: Battle mode, animation timers
-// - BuffSystem (externo): Gestión de buffs
-// - LootSystem (externo): Física y pickup de loot
+// - BuffSystem: Gestión de buffs
+// - LootSystem: Física y pickup de loot
 // ============================================================================
 
 // --- COMMAND PATTERN (preparado para networking/multiplayer) ---
@@ -216,6 +218,8 @@ export class WorldRuntime {
   private regenSystem: RegenSystem | null = null;
   private projectileSystem: ProjectileSystem | null = null;
   private cooldownSystem: CooldownSystem | null = null;
+  private buffSystem: BuffSystem | null = null;
+  private lootSystem: LootSystem | null = null;
 
   // Simulation state
   private isRunning = false;
@@ -248,6 +252,8 @@ export class WorldRuntime {
       playerEntity,
       entities: [playerEntity, ...monsters, ...npcs]
     });
+    this.buffSystem = new BuffSystem({ playerEntity });
+    this.lootSystem = new LootSystem({ playerEntity, groundItems: this.groundItems });
 
     // Registrar todas las entidades iniciales
     this.entityManager.add(playerEntity);
@@ -342,6 +348,17 @@ export class WorldRuntime {
     if (this.cooldownSystem) {
       this.cooldownSystem.tickCooldowns(dt);
     }
+
+    // 8. Tick buff decay (delegated to BuffSystem)
+    if (this.buffSystem) {
+      this.buffSystem.tickBuffDecay(dt);
+    }
+
+    // 9. Tick loot physics (delegated to LootSystem)
+    if (this.lootSystem) {
+      this.lootSystem.tickLootPhysics(dt);
+      this.lootSystem.tickLootPickup();
+    }
   }
 
   // --- SPATIAL GRID REBUILD ---
@@ -364,6 +381,35 @@ export class WorldRuntime {
 
   getProjectiles(): Projectile[] {
     return this.projectileSystem?.getProjectiles() || [];
+  }
+
+  // --- BUFF DELEGATION ---
+  applyBuff(
+    buffId: string,
+    buffName: string,
+    durationMs: number,
+    icon: string,
+    description: string,
+    statModifiers: Partial<{ agi: number; str: number; int: number; dex: number }>
+  ) {
+    this.buffSystem?.applyBuff(buffId, buffName, durationMs, icon, description, statModifiers);
+  }
+
+  removeBuff(buffId: string) {
+    this.buffSystem?.removeBuff(buffId);
+  }
+
+  hasBuff(buffId: string): boolean {
+    return this.buffSystem?.hasBuff(buffId) || false;
+  }
+
+  // --- LOOT DELEGATION ---
+  addGroundItem(item: GroundItem) {
+    this.lootSystem?.addGroundItem(item);
+  }
+
+  getGroundItems(): GroundItem[] {
+    return this.lootSystem?.getGroundItems() || [];
   }
 
   // --- QUERIES PÚBLICOS ---
@@ -392,10 +438,6 @@ export class WorldRuntime {
   }
 
   // --- LIFECYCLE ---
-  addGroundItem(item: GroundItem) {
-    this.groundItems.push(item);
-    this.emit({ type: 'loot_dropped', itemId: item.itemId, x: item.x, z: item.z });
-  }
 
   destroy() {
     this.isRunning = false;
