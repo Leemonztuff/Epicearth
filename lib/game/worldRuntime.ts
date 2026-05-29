@@ -8,6 +8,7 @@ import { BuffSystem } from './shared/BuffSystem';
 import { LootSystem } from './shared/LootSystem';
 import { gameEventBus } from './core/EventBus';
 import { GameContext } from './core/GameContext';
+import { GameCommand, CommandQueue } from './core/GameCommand';
 
 // ============================================================================
 // WORLD RUNTIME - MOTOR DE SIMULACIÓN REALTIME
@@ -211,6 +212,7 @@ export class WorldRuntime {
   private spatialGrid = new SpatialGrid(8);
   private entityManager = new EntityManager();
   private commandQueue: WorldCommand[] = [];
+  private gameCommandQueue: CommandQueue;
   private eventHandlers: WorldEventHandler[] = [];
 
   // Sub-systems (delegated)
@@ -241,6 +243,7 @@ export class WorldRuntime {
 
   constructor(context: GameContext) {
     this.context = context;
+    this.gameCommandQueue = new CommandQueue();
   }
 
   // --- INICIALIZACIÓN ---
@@ -288,6 +291,52 @@ export class WorldRuntime {
     this.commandQueue.push({ ...cmd, timestamp: performance.now() });
   }
 
+  // --- GAME COMMAND QUEUE (para input del jugador) ---
+  enqueueGameCommand(type: GameCommand['type'], payload: GameCommand['payload']) {
+    const playerId = this.playerEntity?.id || 'player_main';
+    this.gameCommandQueue.enqueue(type, playerId, payload);
+  }
+
+  private processGameCommands() {
+    while (this.gameCommandQueue.size() > 0) {
+      const cmd = this.gameCommandQueue.dequeue();
+      if (cmd) {
+        this.executeGameCommand(cmd);
+      }
+    }
+  }
+
+  private executeGameCommand(cmd: GameCommand) {
+    switch (cmd.type) {
+      case 'move':
+        if (this.playerEntity) {
+          const payload = cmd.payload as { x: number; z: number };
+          this.playerEntity.targetX = payload.x;
+          this.playerEntity.targetZ = payload.z;
+          this.playerEntity.state = 'move';
+        }
+        break;
+      case 'attack':
+        if (this.playerEntity) {
+          const payload = cmd.payload as { targetId: string };
+          this.playerEntity.targetEntityId = payload.targetId;
+        }
+        break;
+      case 'skill':
+        // Skill execution is handled by CombatSystem
+        break;
+      case 'use_item':
+        // Item usage is handled by InventorySystem
+        break;
+      case 'interact_npc':
+        // NPC interaction is handled by NpcSystem
+        break;
+      case 'cancel_cast':
+        // Cast cancellation is handled by CombatSystem
+        break;
+    }
+  }
+
   private processCommands() {
     while (this.commandQueue.length > 0) {
       const cmd = this.commandQueue.shift()!;
@@ -327,25 +376,28 @@ export class WorldRuntime {
     // 1. Flush entity lifecycle changes
     this.entityManager.flush();
 
-    // 2. Process command queue
+    // 2. Process world command queue
     this.processCommands();
 
-    // 3. Rebuild spatial grid cada N frames para performance
+    // 3. Process game command queue (player input)
+    this.processGameCommands();
+
+    // 4. Rebuild spatial grid cada N frames para performance
     if (this.tickCount % 3 === 0) {
       this.rebuildSpatialGrid();
     }
 
-    // 4. Tick AI de monstruos (delegated to MonsterAI)
+    // 5. Tick AI de monstruos (delegated to MonsterAI)
     if (this.monsterAI) {
       this.monsterAI.tickMonsterAI(now, dt);
     }
 
-    // 5. Tick regeneración de HP/SP (delegated to RegenSystem)
+    // 6. Tick regeneración de HP/SP (delegated to RegenSystem)
     if (this.regenSystem) {
       this.regenSystem.tickRegeneration(dt);
     }
 
-    // 6. Tick proyectiles (delegated to ProjectileSystem)
+    // 7. Tick proyectiles (delegated to ProjectileSystem)
     if (this.projectileSystem) {
       this.projectileSystem.tickProjectiles(dt);
     }
