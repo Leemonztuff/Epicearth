@@ -4,4 +4,4 @@ export { EventBus, gameEventBus } from './EventBus';
 export type { GameEvents, EventHandler, EventMap } from './EventBus';
 export type { StateProvider, EntityState, PlayerState, StateChangeEvent, StateChangeHandler } from './StateProvider';
 export type { GameContext, GameStoreAPI } from './GameContext';
-export { createZustandGameStoreAPI } from './GameContext';
+export { createGameContext, createZustandGameStoreAPI } from './GameContext';

@@ -1,5 +1,7 @@
-import { CharacterStats, HeadgearId, JobClass, Skill, CombatLog } from '../types';
+import { CharacterStats, HeadgearId, JobClass, Skill, CombatLog, InventorySlot, EquipmentSlot, EquipmentSlotState } from '../types';
 import { ActiveBuff } from '../state';
+import { InventorySystem } from '../shared/InventorySystem';
+import { EquipmentSystem } from '../shared/EquipmentSystem';
 
 // ============================================================================
 // GAME CONTEXT - Inyección de dependencias para sistemas de juego
@@ -34,7 +36,7 @@ export interface GameStoreAPI {
   setTarget(id: string | null, name?: string, hp?: number, maxHp?: number): void;
   updateTargetHp(hp: number): void;
 
-  // Inventory
+  // Legacy Inventory (for backward compatibility)
   updateInventory(updater: (inventory: { id: string; name: string; quantity: number }[]) => { id: string; name: string; quantity: number }[]): void;
 
   // NPC
@@ -54,13 +56,15 @@ export interface GameStoreAPI {
 
 export interface GameContext {
   store: GameStoreAPI;
+  inventory: InventorySystem;
+  equipment: EquipmentSystem;
 }
 
 // ============================================================================
 // ZUSTAND GAME STORE API - Adaptador para useGameStore
 // ============================================================================
 
-export function createZustandGameStoreAPI(): GameStoreAPI {
+export function createGameContext(): GameContext {
   // Lazy import para evitar circular dependencies
   const getStore = () => {
     // eslint-disable-next-line @typescript-eslint/no-require-imports
@@ -74,7 +78,21 @@ export function createZustandGameStoreAPI(): GameStoreAPI {
     return useGameStore;
   };
 
-  return {
+  // Create item database and systems
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const { createItemDatabase } = require('../shared/ItemDatabase');
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const { InventorySystem } = require('../shared/InventorySystem');
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const { EquipmentSystem } = require('../shared/EquipmentSystem');
+
+  const itemDb = createItemDatabase();
+  const inventory = new InventorySystem({ maxSlots: 30, maxWeight: 2000, initialZeny: 5000 });
+  inventory.registerItemDefinitions(Array.from(itemDb.values()));
+
+  const equipment = new EquipmentSystem({ itemDefinitions: itemDb });
+
+  const store: GameStoreAPI = {
     // Player state
     getJobClass: () => getStore().jobClass,
     getStats: () => getStore().stats,
@@ -100,7 +118,7 @@ export function createZustandGameStoreAPI(): GameStoreAPI {
     setTarget: (id, name, hp, maxHp) => getStore().setTarget(id, name, hp, maxHp),
     updateTargetHp: (hp) => getStore().updateTargetHp(hp),
 
-    // Inventory
+    // Legacy Inventory (for backward compatibility)
     updateInventory: (updater) => {
       const store = getStore();
       getUseGameStore().setState({ inventory: updater(store.inventory) });
@@ -120,4 +138,11 @@ export function createZustandGameStoreAPI(): GameStoreAPI {
     getPlayerJobExp: () => getStore().playerJobExp,
     getPlayerJobMaxExp: () => getStore().playerJobMaxExp
   };
+
+  return { store, inventory, equipment };
+}
+
+// Legacy export for backward compatibility
+export function createZustandGameStoreAPI(): GameStoreAPI {
+  return createGameContext().store;
 }

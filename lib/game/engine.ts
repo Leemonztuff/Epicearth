@@ -9,7 +9,7 @@ import { EntitySpawner } from './spawner';
 import { EffectsSystem } from './effects';
 import { PlayerController } from './client/PlayerController';
 import { Entity, GroundItem, HeadgearId, Projectile } from './types';
-import { GameContext, createZustandGameStoreAPI } from './core/GameContext';
+import { GameContext, createGameContext } from './core/GameContext';
 
 // ============================================================================
 // RAGNAROK ENGINE - ORQUESTADOR PRINCIPAL
@@ -76,7 +76,7 @@ export class RagnarokEngine implements EntityLookup {
 
   constructor(container: HTMLDivElement) {
     this.container = container;
-    this.context = { store: createZustandGameStoreAPI() };
+    this.context = createGameContext();
     this.initThree();
     this.initSystems();
     this.initWorld();
