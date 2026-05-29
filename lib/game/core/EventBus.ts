@@ -75,6 +75,17 @@ export interface GameEvents {
   'combat:started': { attackerId: string; targetId: string };
   'combat:ended': { entityId: string };
 
+  // Combat Runtime events
+  'combat:attack': { attackerId: string; targetId: string; skillId?: string; timestamp: number };
+  'combat:attack_result': { attackerId: string; targetId: string; hit: boolean; damage: number; isCrit: boolean; skillId?: string };
+  'combat:miss': { attackerId: string; targetId: string; reason?: string };
+  'combat:death': { entityId: string; killerId?: string; timestamp: number };
+  'combat:aggro': { entityId: string; targetId: string; threat: number; totalThreat: number };
+  'combat:aggro_lost': { entityId: string; targetId: string };
+  'combat:status_applied': { entityId: string; statusId: string; duration: number };
+  'combat:status_expired': { entityId: string; statusId: string };
+  'combat:status_resisted': { entityId: string; statusId: string };
+
   // Movement
   'entity:moved': { entityId: string; x: number; z: number };
   'player:input': { command: import('./GameCommand').GameCommand };

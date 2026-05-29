@@ -1,29 +1,34 @@
 import { Entity } from '../types';
 import { gameEventBus } from '../core/EventBus';
 import { GameContext } from '../core/GameContext';
+import { CombatRuntime, DamageCalculation } from './CombatRuntime';
 
 // ============================================================================
 // MONSTER AI - Sistema de inteligencia artificial para monstruos
 // ============================================================================
 // Extraído de worldRuntime.ts para separar responsabilidades.
 // Maneja: persecución, ataque, wandering, y comportamiento agresivo.
+// Ahora delega cálculo de daño al CombatRuntime (determinístico).
 // ============================================================================
 
 export interface MonsterAIConfig {
   playerEntity: Entity;
   monsters: Entity[];
   context: GameContext;
+  combatRuntime: CombatRuntime;
 }
 
 export class MonsterAI {
   private playerEntity: Entity;
   private monsters: Entity[];
   private context: GameContext;
+  private runtime: CombatRuntime;
 
   constructor(config: MonsterAIConfig) {
     this.playerEntity = config.playerEntity;
     this.monsters = config.monsters;
     this.context = config.context;
+    this.runtime = config.combatRuntime;
   }
 
   // --- MAIN AI TICK ---
@@ -72,31 +77,29 @@ export class MonsterAI {
       mob.animationTimer = 0;
       const store = this.context.store;
       const stats = store.getStats();
-      const hitScore = 150 + (isBoss ? 120 : 15);
-      const fleeScore = stats.flee;
-      const dodgePercent = Math.min(0.95, Math.max(0.05, (fleeScore - hitScore + 100) / 100));
-      const playerEvaded = Math.random() < dodgePercent;
 
-      if (playerEvaded) {
+      const dmgCalc: DamageCalculation = {
+        attackerAtk: isBoss ? 280 : (mob.mobType === 'pecopeco' ? 45 : 18),
+        attackerStats: { hit: 150 + (isBoss ? 120 : 15), luk: 0 },
+        targetDef: stats.def || 0,
+        targetStats: stats,
+        skillMultiplier: 1.0,
+      };
+      const result = this.runtime.calculateDamage(dmgCalc, stats);
+
+      if (!result.isHit) {
         gameEventBus.emit('entity:damaged', { entityId: this.playerEntity.id, damage: 0, isCrit: false });
+        gameEventBus.emit('combat:miss', { attackerId: mob.id, targetId: this.playerEntity.id, reason: 'flee' });
         store.addCombatLog(`[${mob.name}] te ataca y evades su golpe (FLEE).`, 'system');
       } else {
-        const strikeAtk = isBoss ? 280 : (mob.mobType === 'pecopeco' ? 45 : 18);
-        const randVariation = Math.floor((Math.random() - 0.5) * strikeAtk * 0.1);
-        let rawDmg = strikeAtk + randVariation - (stats.def * 0.15);
-        let finalDmg = Math.floor(Math.max(1, rawDmg));
+        const finalDmg = result.damage;
 
-        this.playerEntity.currentHp = Math.max(0, this.playerEntity.currentHp - finalDmg);
-        this.playerEntity.state = 'hit';
+        this.runtime.applyDamageToEntity(this.playerEntity, finalDmg, mob.id, now);
         this.playerEntity.hitRecoveryEndTime = now + 240;
 
         gameEventBus.emit('entity:damaged', { entityId: this.playerEntity.id, damage: finalDmg, isCrit: false });
         store.addCombatLog(`¡[${mob.name}] te propina un golpe brutal! Pierdes ${finalDmg} HP.`, 'player_hit');
         store.setPlayerHpSp(this.playerEntity.currentHp, this.playerEntity.currentSp);
-
-        if (this.playerEntity.currentHp <= 0) {
-          gameEventBus.emit('entity:died', { entityId: this.playerEntity.id, killerId: mob.id });
-        }
       }
     }
   }

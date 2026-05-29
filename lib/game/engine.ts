@@ -11,6 +11,7 @@ import { LocalStateProvider } from './client/LocalStateProvider';
 import { Entity, GroundItem, Projectile } from './types';
 import { GameContext, createGameContext } from './core/GameContext';
 import { gameEventBus } from './core/EventBus';
+import { CombatRuntime } from './server/CombatRuntime';
 
 // ============================================================================
 // RAGNAROK ENGINE - ORQUESTADOR PRINCIPAL
@@ -168,14 +169,18 @@ export class RagnarokEngine implements EntityLookup {
     this.monsters.push(boss);
     store.addCombatLog('★ ¡ALERTA! El Boss MVP Baphomet ha invocado su presencia en el mapa ★', 'mvp');
 
+    // Create shared CombatRuntime (deterministic, MMO-ready)
+    const combatRuntime = new CombatRuntime();
+
     // Init World Runtime
-    this.worldRuntime.init(this.playerEntity, this.monsters, this.npcs);
+    this.worldRuntime.init(this.playerEntity, this.monsters, this.npcs, combatRuntime);
 
     // Init Combat System
     this.combatSystem = new CombatSystem({
       playerEntity: this.playerEntity,
       monsters: this.monsters,
-      context: this.context
+      context: this.context,
+      combatRuntime
     });
     this.combatSystem.setCallbacks({
       onFloatingText: (text, color, scale, x, y, z) => this.rendererBridge.spawnFloatingText(text, color, scale, x, y, z),
@@ -275,10 +280,11 @@ export class RagnarokEngine implements EntityLookup {
     const store = this.context.store;
     const tickScale = dt * 60;
 
-    // 1. Combat systems (casting, auto-attack, delayed actions)
+    // 1. Combat systems (casting, auto-attack, delayed actions, runtime)
     this.combatSystem.tickActiveCasting(dt);
     this.combatSystem.tickDelayedActions(now);
     this.combatSystem.tickAutoCombat(now, dt);
+    this.combatSystem.tickRuntime(dt, now);
 
     // 2. World Runtime update (AI, projectiles, buffs, regen, loot)
     this.worldRuntime.update(dt, now);

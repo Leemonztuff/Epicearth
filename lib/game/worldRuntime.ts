@@ -6,6 +6,7 @@ import { ProjectileSystem } from './shared/ProjectileSystem';
 import { CooldownSystem } from './shared/CooldownSystem';
 import { BuffSystem } from './shared/BuffSystem';
 import { LootSystem } from './shared/LootSystem';
+import { CombatRuntime } from './server/CombatRuntime';
 import { gameEventBus } from './core/EventBus';
 import { GameContext } from './core/GameContext';
 import { GameCommand, CommandQueue } from './core/GameCommand';
@@ -247,13 +248,13 @@ export class WorldRuntime {
   }
 
   // --- INICIALIZACIÓN ---
-  init(playerEntity: Entity, monsters: Entity[], npcs: Entity[]) {
+  init(playerEntity: Entity, monsters: Entity[], npcs: Entity[], combatRuntime: CombatRuntime) {
     this.playerEntity = playerEntity;
     this.monsters = monsters;
     this.npcs = npcs;
 
     // Initialize sub-systems with context
-    this.monsterAI = new MonsterAI({ playerEntity, monsters, context: this.context });
+    this.monsterAI = new MonsterAI({ playerEntity, monsters, context: this.context, combatRuntime });
     this.regenSystem = new RegenSystem({ playerEntity, context: this.context });
     this.projectileSystem = new ProjectileSystem({ playerEntity, monsters });
     this.cooldownSystem = new CooldownSystem({

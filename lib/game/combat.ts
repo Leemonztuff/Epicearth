@@ -2,21 +2,24 @@ import { Entity, Projectile, Skill } from './types';
 import { gameAudio } from './audio';
 import { gameEventBus } from './core/EventBus';
 import { GameContext } from './core/GameContext';
+import { CombatRuntime, DamageCalculation } from './server/CombatRuntime';
 
 // ============================================================================
 // COMBAT SYSTEM - Sistema de combate
 // ============================================================================
+// Orchestrator: combina CombatRuntime (pure logic) con callbacks de render.
 // Maneja: auto-combate, skills, proyectiles, drops de monstruos.
-// Usa GameContext para acceso al state (sin imports directos de Zustand).
 // ============================================================================
 
 export interface CombatSystemConfig {
   playerEntity: Entity;
   monsters: Entity[];
   context: GameContext;
+  combatRuntime?: CombatRuntime;
 }
 
 export class CombatSystem {
+  private runtime: CombatRuntime;
   private playerEntity: Entity;
   private monsters: Entity[];
   private context: GameContext;
@@ -40,7 +43,10 @@ export class CombatSystem {
     this.playerEntity = config.playerEntity;
     this.monsters = config.monsters;
     this.context = config.context;
+    this.runtime = config.combatRuntime || new CombatRuntime();
   }
+
+  getRuntime(): CombatRuntime { return this.runtime; }
 
   setCallbacks(callbacks: {
     onFloatingText?: (text: string, color: string, scale: number, x: number, y: number, z: number) => void;
@@ -56,6 +62,11 @@ export class CombatSystem {
 
   getActiveCast() { return this.activeCast; }
   getBattleModeEndTime() { return this.battleModeEndTime; }
+
+  tickRuntime(dt: number, now: number): void {
+    this.runtime.tickStatuses(dt, now);
+    this.runtime.tickAggroDecay(now);
+  }
 
   tickDelayedActions(now: number) {
     for (let i = this.delayedActions.length - 1; i >= 0; i--) {
@@ -192,22 +203,23 @@ export class CombatSystem {
         this.playerEntity.hitRecoveryEndTime = now + 300;
         this.triggerBattleMode(now);
 
-        const hitChance = Math.min(1.0, Math.max(0.05, (stats.hit - (targetMob.maxHp * 0.1)) / 100));
-        const isHitSucceeded = Math.random() < hitChance;
+        const dmgCalc: DamageCalculation = {
+          attackerAtk: stats.atk,
+          attackerStats: stats,
+          targetDef: targetMob.maxHp,
+          targetStats: {},
+          skillMultiplier: 1.0,
+        };
+        const result = this.runtime.calculateDamage(dmgCalc, stats);
 
-        if (isHitSucceeded) {
-          const rawDmg = stats.atk;
-          const randOffset = Math.floor((Math.random() - 0.5) * rawDmg * 0.15);
-          const isCrit = Math.random() < (stats.luk * 0.005 + 0.05);
-          let damage = Math.floor(rawDmg + randOffset);
-          if (isCrit) damage = Math.floor(damage * 1.5);
+        if (result.isHit) {
+          const { damage, isCrit } = result;
 
           if (isSniper) {
             this.onProjectileSpawn('arrow', this.playerEntity, targetMob, damage, isCrit);
             store.addCombatLog(`Disparas flecha: ${damage} daño en camino a [${targetMob.name}].`, 'monster_hit');
           } else {
-            targetMob.currentHp = Math.max(0, targetMob.currentHp - damage);
-            targetMob.state = 'hit';
+            this.runtime.applyDamageToEntity(targetMob, damage, this.playerEntity.id, now);
             targetMob.hitRecoveryEndTime = now + 400;
 
             gameEventBus.emit('entity:damaged', { entityId: targetMob.id, damage, isCrit, sourceId: this.playerEntity.id });
@@ -225,7 +237,6 @@ export class CombatSystem {
             store.updateTargetHp(targetMob.currentHp);
 
             if (targetMob.currentHp <= 0) {
-              gameEventBus.emit('entity:died', { entityId: targetMob.id, killerId: this.playerEntity.id });
               this.reapMonsterRewards(targetMob);
             }
           }
@@ -270,61 +281,51 @@ export class CombatSystem {
 
     if (skillId === 'heal') {
       const healAmt = Math.floor(this.playerEntity.maxHp * 0.35 + stats.int * 14);
-      this.playerEntity.currentHp = Math.min(this.playerEntity.maxHp, this.playerEntity.currentHp + healAmt);
-      gameEventBus.emit('entity:healed', { entityId: this.playerEntity.id, amount: healAmt });
+      this.runtime.applyHealToEntity(this.playerEntity, healAmt, this.playerEntity.id, now);
       this.onFloatingText(`+${healAmt}`, '#10b981', 1.8, this.playerEntity.x, 2.5, this.playerEntity.z);
       store.addCombatLog(`Lanzado Heal: +${healAmt} HP recuperados.`, 'heal');
       gameAudio.playHeal();
     } else if (targetMob && targetMob.currentHp > 0) {
-      const multipliers: Record<string, number> = {
-        bash: 4.0 + (stats.str * 0.02),
-        double_strafe: 3.5 + (stats.dex * 0.035),
-        sonic_blow: 6.0 + (stats.str * 0.03),
-        grimtooth: 3.0,
-        holy_light: 2.8 + (stats.int * 0.03),
-        falcon_strike: 4.5
-      };
-      const multiplier = multipliers[skillId] || 2.0;
-      const rawDmg = Math.floor(stats.atk * multiplier);
-      const randOffset = Math.floor((Math.random() - 0.5) * rawDmg * 0.15);
-      const isCrit = Math.random() < (stats.luk * 0.005 + 0.05);
-      let damage = Math.max(1, rawDmg + randOffset - (skillId === 'falcon_strike' ? 0 : targetMob.maxHp * 0.05));
-      if (isCrit) damage = Math.floor(damage * 1.5);
-      damage = Math.floor(damage);
+      const result = this.runtime.executeSkill(this.playerEntity, targetMob, skill, now, () => store.getStats());
 
-      if (skillId === 'double_strafe') {
+      if (result.damageResult && !result.damageResult.isHit) {
+        this.onFloatingText('MISS', '#94a3b8', 1.0, targetMob.x, 2.2, targetMob.z);
+        store.addCombatLog(`¡Lanzado ${skill.name} pero fallaste! [${targetMob.name}] esquivó.`, 'skill');
+      } else if (result.damageResult) {
+        const { damage, isCrit } = result.damageResult;
         const halfDmg = Math.floor(damage / 2);
-        this.onProjectileSpawn('arrow', this.playerEntity, targetMob, halfDmg, isCrit);
-        this.delayedActions.push({
-          fn: () => this.onProjectileSpawn('arrow', this.playerEntity, targetMob, halfDmg, isCrit),
-          triggerTime: performance.now() + 180
-        });
-        store.addCombatLog(`¡Lanzado ${skill.name}! Disparando flechas de proyectil en ráfaga doble...`, 'skill');
-      } else if (skillId === 'holy_light') {
-        this.onProjectileSpawn('holy_light', this.playerEntity, targetMob, damage, isCrit);
-        store.addCombatLog(`¡Lanzado ${skill.name}! Proyectil sagrado de luz divina en camino...`, 'skill');
-      } else {
-        targetMob.currentHp = Math.max(0, targetMob.currentHp - damage);
-        targetMob.state = 'hit';
-        targetMob.hitRecoveryEndTime = now + 350;
 
-        gameEventBus.emit('entity:damaged', { entityId: targetMob.id, damage, isCrit, sourceId: this.playerEntity.id });
+        if (skillId === 'double_strafe') {
+          this.onProjectileSpawn('arrow', this.playerEntity, targetMob, halfDmg, isCrit);
+          this.delayedActions.push({
+            fn: () => this.onProjectileSpawn('arrow', this.playerEntity, targetMob, halfDmg, isCrit),
+            triggerTime: performance.now() + 180
+          });
+          store.addCombatLog(`¡Lanzado ${skill.name}! Disparando flechas de proyectil en ráfaga doble...`, 'skill');
+        } else if (skillId === 'holy_light') {
+          this.onProjectileSpawn('holy_light', this.playerEntity, targetMob, damage, isCrit);
+          store.addCombatLog(`¡Lanzado ${skill.name}! Proyectil sagrado de luz divina en camino...`, 'skill');
+        } else {
+          this.runtime.applyDamageToEntity(targetMob, damage, this.playerEntity.id, now);
+          targetMob.hitRecoveryEndTime = now + 350;
 
-        this.onFloatingText(
-          isCrit ? `★ CRIT ${damage} ★` : `${damage}`,
-          isCrit ? '#f59e0b' : '#38bdf8',
-          isCrit ? 1.8 : 1.35,
-          targetMob.x, 2.2, targetMob.z
-        );
+          gameEventBus.emit('entity:damaged', { entityId: targetMob.id, damage, isCrit, sourceId: this.playerEntity.id });
 
-        gameAudio.playHit();
-        this.onScreenShake(isCrit ? 0.28 : 0.14);
-        store.addCombatLog(`¡Lanzado ${skill.name}! Daño propinado: ${damage} HP a [${targetMob.name}].`, 'skill');
-        store.updateTargetHp(targetMob.currentHp);
+          this.onFloatingText(
+            isCrit ? `★ CRIT ${damage} ★` : `${damage}`,
+            isCrit ? '#f59e0b' : '#38bdf8',
+            isCrit ? 1.8 : 1.35,
+            targetMob.x, 2.2, targetMob.z
+          );
 
-        if (targetMob.currentHp <= 0) {
-          gameEventBus.emit('entity:died', { entityId: targetMob.id, killerId: this.playerEntity.id });
-          this.reapMonsterRewards(targetMob);
+          gameAudio.playHit();
+          this.onScreenShake(isCrit ? 0.28 : 0.14);
+          store.addCombatLog(`¡Lanzado ${skill.name}! Daño propinado: ${damage} HP a [${targetMob.name}].`, 'skill');
+          store.updateTargetHp(targetMob.currentHp);
+
+          if (targetMob.currentHp <= 0) {
+            this.reapMonsterRewards(targetMob);
+          }
         }
       }
     }
@@ -334,9 +335,10 @@ export class CombatSystem {
 
   impactProjectile(proj: Projectile, target: Entity) {
     const store = this.context.store;
-    target.currentHp = Math.max(0, target.currentHp - proj.damage);
-    target.state = 'hit';
-    target.hitRecoveryEndTime = Date.now() + 180;
+    const now = performance.now();
+
+    this.runtime.applyDamageToEntity(target, proj.damage, proj.ownerEntityId, now);
+    target.hitRecoveryEndTime = now + 180;
 
     gameEventBus.emit('entity:damaged', { entityId: target.id, damage: proj.damage, isCrit: proj.isCrit, sourceId: proj.ownerEntityId });
 
@@ -356,7 +358,6 @@ export class CombatSystem {
     store.updateTargetHp(target.currentHp);
 
     if (target.currentHp <= 0 && target.type !== 'player') {
-      gameEventBus.emit('entity:died', { entityId: target.id, killerId: this.playerEntity.id });
       this.reapMonsterRewards(target);
     }
   }
