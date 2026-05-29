@@ -313,7 +313,7 @@ export class RagnarokEngine implements EntityLookup {
     });
 
     // Projectiles
-    const projectiles = this.worldRuntime['projectiles'] || [];
+    const projectiles = this.worldRuntime.getProjectiles();
     projectiles.forEach((proj: Projectile) => {
       let mesh = this.projectileMeshes[proj.id];
       if (!mesh) {

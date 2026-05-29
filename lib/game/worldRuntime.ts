@@ -2,6 +2,10 @@ import { Entity, Projectile, GroundItem, JobClass, Skill } from './types';
 import { useGameStore } from './state';
 import { gameAudio } from './audio';
 import { MonsterAI } from './server/MonsterAI';
+import { RegenSystem } from './shared/RegenSystem';
+import { ProjectileSystem } from './shared/ProjectileSystem';
+import { CooldownSystem } from './shared/CooldownSystem';
+import { gameEventBus } from './core/EventBus';
 
 // ============================================================================
 // WORLD RUNTIME - MOTOR DE SIMULACIÓN REALTIME
@@ -9,6 +13,14 @@ import { MonsterAI } from './server/MonsterAI';
 // Arquitectura de motor de videojuego, NO de aplicación web.
 // Responsabilidades: registrar entidades, update loop, collision,
 // AI, combat, spatial partitioning, entity lifecycle.
+//
+// Sistemas delegados:
+// - MonsterAI: IA de monstruos
+// - RegenSystem: Regeneración HP/SP
+// - ProjectileSystem: Física de proyectiles
+// - CooldownSystem: Battle mode, animation timers
+// - BuffSystem (externo): Gestión de buffs
+// - LootSystem (externo): Física y pickup de loot
 // ============================================================================
 
 // --- COMMAND PATTERN (preparado para networking/multiplayer) ---
@@ -199,8 +211,11 @@ export class WorldRuntime {
   private commandQueue: WorldCommand[] = [];
   private eventHandlers: WorldEventHandler[] = [];
 
-  // Battle mode end time (set by combat system)
-  private battleModeEndTime = 0;
+  // Sub-systems (delegated)
+  private monsterAI: MonsterAI | null = null;
+  private regenSystem: RegenSystem | null = null;
+  private projectileSystem: ProjectileSystem | null = null;
+  private cooldownSystem: CooldownSystem | null = null;
 
   // Simulation state
   private isRunning = false;
@@ -213,7 +228,6 @@ export class WorldRuntime {
   private monsters: Entity[] = [];
   private npcs: Entity[] = [];
   private groundItems: GroundItem[] = [];
-  private projectiles: Projectile[] = [];
 
   // Callbacks para efectos de audio/visual
   private onAudioTrigger?: (action: string) => void;
@@ -226,8 +240,14 @@ export class WorldRuntime {
     this.monsters = monsters;
     this.npcs = npcs;
 
-    // Initialize MonsterAI
+    // Initialize sub-systems
     this.monsterAI = new MonsterAI({ playerEntity, monsters });
+    this.regenSystem = new RegenSystem({ playerEntity });
+    this.projectileSystem = new ProjectileSystem({ playerEntity, monsters });
+    this.cooldownSystem = new CooldownSystem({
+      playerEntity,
+      entities: [playerEntity, ...monsters, ...npcs]
+    });
 
     // Registrar todas las entidades iniciales
     this.entityManager.add(playerEntity);
@@ -277,9 +297,6 @@ export class WorldRuntime {
     }
   }
 
-  // --- MONSTER AI (delegated to MonsterAI system) ---
-  private monsterAI: MonsterAI | null = null;
-
   // --- UPDATE LOOP (motor central) ---
   update(dt: number, now: number) {
     if (!this.isRunning) return;
@@ -311,23 +328,20 @@ export class WorldRuntime {
       this.monsterAI.tickMonsterAI(now, dt);
     }
 
-    // 5. Tick regeneración de HP/SP
-    this.tickRegeneration(dt);
+    // 5. Tick regeneración de HP/SP (delegated to RegenSystem)
+    if (this.regenSystem) {
+      this.regenSystem.tickRegeneration(dt);
+    }
 
-    // 6. Tick decay de buffs
-    this.tickBuffDecay(dt);
+    // 6. Tick proyectiles (delegated to ProjectileSystem)
+    if (this.projectileSystem) {
+      this.projectileSystem.tickProjectiles(dt);
+    }
 
-    // 7. Tick proyectiles
-    this.tickProjectiles(dt);
-
-    // 8. Tick loot physics
-    this.tickLootPhysics(dt);
-
-    // 9. Auto-pickup de items
-    this.tickLootPickup();
-
-    // 10. Tick cooldowns generales
-    this.tickCooldowns(dt);
+    // 7. Tick cooldowns (delegated to CooldownSystem)
+    if (this.cooldownSystem) {
+      this.cooldownSystem.tickCooldowns(dt);
+    }
   }
 
   // --- SPATIAL GRID REBUILD ---
@@ -338,160 +352,18 @@ export class WorldRuntime {
     });
   }
 
-  // --- REGENERACIÓN ---
-  private tickRegeneration(dt: number) {
-    if (this.playerEntity.state === 'death') return;
-    const store = useGameStore.getState();
-    const tickScale = dt * 60.0;
-
-    const hpRegenRate = (0.04 + store.stats.vit * 0.011) * tickScale;
-    this.playerEntity.currentHp = Math.min(this.playerEntity.maxHp, this.playerEntity.currentHp + hpRegenRate);
-
-    const spRegenRate = (0.018 + store.stats.int * 0.006) * tickScale;
-    this.playerEntity.currentSp = Math.min(this.playerEntity.maxSp, this.playerEntity.currentSp + spRegenRate);
-
-    store.setPlayerHpSp(this.playerEntity.currentHp, this.playerEntity.currentSp);
-  }
-
-  // --- BUFF DECAY ---
-  private tickBuffDecay(dt: number) {
-    const store = useGameStore.getState();
-    if (store.activeBuffs.length === 0) return;
-
-    const dtMs = dt * 1000;
-    let updatedBuffs = store.activeBuffs.map(b => ({ ...b, durationMs: b.durationMs - dtMs }));
-    const expired = updatedBuffs.filter(b => b.durationMs <= 0);
-    updatedBuffs = updatedBuffs.filter(b => b.durationMs > 0);
-
-    if (expired.length > 0) {
-      let agiSub = 0, strSub = 0, intSub = 0, dexSub = 0;
-      expired.forEach(e => {
-        store.addCombatLog(`⏳ El buff [${e.name}] ha expirado.`, 'system');
-        this.emit({ type: 'buff_expired', entityId: this.playerEntity.id, buffId: e.id });
-        if (e.id === 'increase_agi') agiSub += 20;
-        if (e.id === 'blessing') { strSub += 20; intSub += 20; dexSub += 20; }
-      });
-
-      store.updateStats({
-        agi: Math.max(1, store.stats.agi - agiSub),
-        str: Math.max(1, store.stats.str - strSub),
-        int: Math.max(1, store.stats.int - intSub),
-        dex: Math.max(1, store.stats.dex - dexSub)
-      });
-
-      this.playerEntity.maxHp = store.stats.maxHp;
-      this.playerEntity.maxSp = store.stats.maxSp;
-    }
-
-    useGameStore.setState({ activeBuffs: updatedBuffs });
-  }
-
-  // --- PROYECTILES ---
-  private tickProjectiles(dt: number) {
-    const tickScale = dt * 60.0;
-
-    for (let i = this.projectiles.length - 1; i >= 0; i--) {
-      const proj = this.projectiles[i];
-      let target: Entity | undefined;
-
-      if (this.playerEntity.id === proj.targetEntityId) {
-        target = this.playerEntity;
-      } else {
-        target = this.monsters.find(m => m.id === proj.targetEntityId);
-      }
-
-      const speedScale = proj.speed * tickScale;
-
-      if (!target || target.currentHp <= 0 || target.state === 'death') {
-        proj.y -= 0.15 * speedScale;
-        if (proj.y <= 0) this.projectiles.splice(i, 1);
-        continue;
-      }
-
-      const targetHeightOffset = target.type === 'boss_mvp' ? 1.6 : 0.85;
-      const tY = target.y + targetHeightOffset;
-      const pdx = target.x - proj.x;
-      const pdy = tY - proj.y;
-      const pdz = target.z - proj.z;
-      const pdist = Math.sqrt(pdx * pdx + pdy * pdy + pdz * pdz);
-
-      if (pdist < speedScale * 1.25) {
-        // Impacto - emitir evento para que el combat system resuelva
-        this.emit({ type: 'entity_damaged', entityId: target.id, damage: proj.damage, isCrit: proj.isCrit });
-        this.projectiles.splice(i, 1);
-      } else {
-        proj.x += (pdx / pdist) * speedScale;
-        proj.y += (pdy / pdist) * speedScale;
-        proj.z += (pdz / pdist) * speedScale;
-      }
-    }
-  }
-
-  // --- LOOT PHYSICS ---
-  private tickLootPhysics(dt: number) {
-    const tickScale = dt * 60.0;
-
-    this.groundItems.forEach(item => {
-      if (item.velY !== undefined && item.velX !== undefined && item.velZ !== undefined) {
-        const gravityAcc = -0.38;
-        item.velY += gravityAcc * tickScale;
-        item.x += item.velX * dt;
-        item.y += item.velY * dt;
-        item.z += item.velZ * dt;
-
-        if (item.y <= 0.05) {
-          item.y = 0.05;
-          if (item.bounceCount !== undefined && item.bounceCount < 2) {
-            item.velY = -item.velY * 0.45;
-            item.velX *= 0.5;
-            item.velZ *= 0.5;
-            item.bounceCount++;
-            this.onAudioTrigger?.('item_bounce');
-          } else {
-            item.velY = 0;
-            item.velX = 0;
-            item.velZ = 0;
-          }
-        }
-      }
-    });
-  }
-
-  // --- LOOT PICKUP ---
-  private tickLootPickup() {
-    const store = useGameStore.getState();
-
-    for (let i = this.groundItems.length - 1; i >= 0; i--) {
-      const item = this.groundItems[i];
-      const dist = Math.sqrt(
-        (item.x - this.playerEntity.x) ** 2 + (item.z - this.playerEntity.z) ** 2
-      );
-
-      if (dist < 1.35) {
-        store.addCombatLog(`¡Has recogido [${item.name}] x${item.quantity}!`, 'loot');
-        this.groundItems.splice(i, 1);
-      }
-    }
-  }
-
-  // --- COOLDOWNS ---
-  private tickCooldowns(dt: number) {
-    const store = useGameStore.getState();
-
-    // Battle mode decay
-    if (store.battleMode && performance.now() > this.battleModeEndTime) {
-      useGameStore.setState({ battleMode: false });
-    }
-
-    // Animation timers
-    this.entityManager.getAll().forEach(e => {
-      e.animationTimer += dt;
-    });
-  }
-
   // --- PUBLIC SETTERS ---
   setBattleModeEndTime(endTime: number) {
-    this.battleModeEndTime = endTime;
+    this.cooldownSystem?.setBattleModeEndTime(endTime);
+  }
+
+  // --- PROJECTILE DELEGATION ---
+  spawnProjectile(type: Projectile['type'], owner: Entity, target: Entity, damage: number, isCrit: boolean) {
+    this.projectileSystem?.spawnProjectile(type, owner, target, damage, isCrit);
+  }
+
+  getProjectiles(): Projectile[] {
+    return this.projectileSystem?.getProjectiles() || [];
   }
 
   // --- QUERIES PÚBLICOS ---
@@ -520,17 +392,6 @@ export class WorldRuntime {
   }
 
   // --- LIFECYCLE ---
-  spawnProjectile(type: Projectile['type'], owner: Entity, target: Entity, damage: number, isCrit: boolean) {
-    const proj: Projectile = {
-      id: `proj_${Math.random()}_${Date.now()}`,
-      type, x: owner.x, y: owner.y + 1.1, z: owner.z,
-      speed: type === 'arrow' ? 0.38 : 0.28,
-      targetEntityId: target.id, ownerEntityId: owner.id,
-      damage, isCrit, spawnTime: Date.now(), height: 1.1
-    };
-    this.projectiles.push(proj);
-  }
-
   addGroundItem(item: GroundItem) {
     this.groundItems.push(item);
     this.emit({ type: 'loot_dropped', itemId: item.itemId, x: item.x, z: item.z });
@@ -550,7 +411,7 @@ export class WorldRuntime {
       tickCount: this.tickCount,
       entities: this.entityManager.count,
       spatialGrid: this.spatialGrid.getStats(),
-      projectiles: this.projectiles.length,
+      projectiles: this.projectileSystem?.getProjectileCount() || 0,
       groundItems: this.groundItems.length,
       commandQueue: this.commandQueue.length
     };
