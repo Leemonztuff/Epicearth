@@ -359,7 +359,7 @@ export class CombatSystem {
 
   reapMonsterRewards(mob: Entity) {
     const store = this.context.store;
-    const inventory = this.context.inventory;
+    const lootSystem = this.context.loot;
     mob.state = 'death';
     this.playerEntity.targetEntityId = null;
     store.setTarget(null);
@@ -387,17 +387,16 @@ export class CombatSystem {
       store.addCombatLog(`Matas a [${mob.name}]. +${expBase} EXP base, +${expJob} EXP job.`, 'system');
     }
 
-    // Drop items based on monster type
+    // Drop items to ground (not directly to inventory)
     const drops = this.getDropsForMob(mob);
     drops.forEach(drop => {
-      inventory.addItem(drop.itemId, drop.quantity);
-      store.addCombatLog(`[Loot] Obtuviste ${drop.name} x${drop.quantity}.`, 'loot');
+      lootSystem.dropItemFromMob(mob, drop.itemId, drop.name, drop.quantity);
+      store.addCombatLog(`[Loot] ${drop.name} x${drop.quantity} cayó al suelo.`, 'loot');
     });
 
-    // Drop Zeny
+    // Drop Zeny as visual indicator
     const zenyDrop = mob.type === 'boss_mvp' ? 5000 : (mob.mobType === 'poring' ? 10 : mob.mobType === 'poporing' ? 25 : 100);
-    store.addExp(0, 0); // Trigger store update
-    // Note: Zeny is handled by the inventory system directly
+    store.addCombatLog(`[Zeny] +${zenyDrop}z`, 'loot');
   }
 
   private getDropsForMob(mob: Entity): { itemId: string; name: string; quantity: number }[] {

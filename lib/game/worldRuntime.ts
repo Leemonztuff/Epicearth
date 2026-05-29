@@ -414,7 +414,7 @@ export class WorldRuntime {
     this.lootSystem?.addGroundItem(item);
   }
 
-  getGroundItems(): GroundItem[] {
+  getGroundItems(): readonly GroundItem[] {
     return this.lootSystem?.getGroundItems() || [];
   }
 

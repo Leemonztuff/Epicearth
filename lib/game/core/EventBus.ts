@@ -88,7 +88,7 @@ export interface GameEvents {
   'buff:expired': { entityId: string; buffId: string };
 
   // Loot
-  'loot:dropped': { itemId: string; x: number; z: number };
+  'loot:dropped': { itemId: string; x: number; z: number; quantity?: number };
   'loot:picked': { entityId: string; itemId: string };
 
   // Progression

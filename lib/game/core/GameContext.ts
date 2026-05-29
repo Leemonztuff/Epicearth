@@ -2,6 +2,7 @@ import { CharacterStats, HeadgearId, JobClass, Skill, CombatLog, InventorySlot, 
 import { ActiveBuff } from '../state';
 import { InventorySystem } from '../shared/InventorySystem';
 import { EquipmentSystem } from '../shared/EquipmentSystem';
+import { LootSystem } from '../shared/LootSystem';
 
 // ============================================================================
 // GAME CONTEXT - Inyección de dependencias para sistemas de juego
@@ -58,6 +59,7 @@ export interface GameContext {
   store: GameStoreAPI;
   inventory: InventorySystem;
   equipment: EquipmentSystem;
+  loot: LootSystem;
 }
 
 // ============================================================================
@@ -85,12 +87,18 @@ export function createGameContext(): GameContext {
   const { InventorySystem } = require('../shared/InventorySystem');
   // eslint-disable-next-line @typescript-eslint/no-require-imports
   const { EquipmentSystem } = require('../shared/EquipmentSystem');
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const { LootSystem } = require('../shared/LootSystem');
 
   const itemDb = createItemDatabase();
   const inventory = new InventorySystem({ maxSlots: 30, maxWeight: 2000, initialZeny: 5000 });
   inventory.registerItemDefinitions(Array.from(itemDb.values()));
 
   const equipment = new EquipmentSystem({ itemDefinitions: itemDb });
+
+  // Loot system will be initialized with player entity later
+  const groundItems: any[] = [];
+  const loot = new LootSystem({ playerEntity: { id: 'temp', x: 0, y: 0, z: 0 } as any, groundItems, context: { store: {} as any, inventory, equipment } as any });
 
   const store: GameStoreAPI = {
     // Player state
@@ -139,7 +147,7 @@ export function createGameContext(): GameContext {
     getPlayerJobMaxExp: () => getStore().playerJobMaxExp
   };
 
-  return { store, inventory, equipment };
+  return { store, inventory, equipment, loot };
 }
 
 // Legacy export for backward compatibility

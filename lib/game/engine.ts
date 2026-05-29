@@ -181,6 +181,13 @@ export class RagnarokEngine implements EntityLookup {
       onScreenShake: (intensity) => { this.screenShakeIntensity = intensity; }
     });
 
+    // Re-initialize loot system with actual player entity
+    this.context.loot = new (this.context.loot.constructor as any)({
+      playerEntity: this.playerEntity,
+      groundItems: [],
+      context: this.context
+    });
+
     // Init Player Controller (extracted from engine)
     this.playerController = new PlayerController({
       playerEntity: this.playerEntity,

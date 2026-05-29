@@ -5,8 +5,8 @@ import { GameContext } from '../core/GameContext';
 // ============================================================================
 // LOOT SYSTEM - Gestión de items en el suelo y recogida
 // ============================================================================
-// Extraído de worldRuntime.ts para separar responsabilidades.
-// Maneja: física de loot, pickup automático, y generación de drops.
+// Maneja: física de loot, pickup manual, y generación de drops.
+// Estilo Ragnarok Online: items caen al suelo, jugador decide cuándo recoger.
 // ============================================================================
 
 export interface LootSystemConfig {
@@ -57,7 +57,7 @@ export class LootSystem {
     });
   }
 
-  // --- LOOT PICKUP ---
+  // --- LOOT PICKUP (manual - jugador camina sobre item) ---
 
   tickLootPickup(): void {
     const store = this.context.store;
@@ -69,8 +69,8 @@ export class LootSystem {
         (item.x - this.playerEntity.x) ** 2 + (item.z - this.playerEntity.z) ** 2
       );
 
-      if (dist < 1.35) {
-        // Add to new inventory system
+      // Auto-pickup cuando el jugador camina sobre el item (distancia muy cercana)
+      if (dist < 0.8) {
         const added = inventory.addItem(item.itemId, item.quantity);
         
         if (added) {
@@ -82,20 +82,58 @@ export class LootSystem {
     }
   }
 
-  // --- ADD GROUND ITEM ---
+  // --- ADD GROUND ITEM (cuando un monstruo muere) ---
 
   addGroundItem(item: GroundItem): void {
     this.groundItems.push(item);
-    gameEventBus.emit('loot:dropped', { itemId: item.itemId, x: item.x, z: item.z });
+    gameEventBus.emit('loot:dropped', { itemId: item.itemId, x: item.x, z: item.z, quantity: item.quantity });
+  }
+
+  // --- DROP ITEM FROM MOON ---
+
+  dropItemFromMob(
+    mob: Entity,
+    itemId: string,
+    itemName: string,
+    quantity: number = 1
+  ): void {
+    // Calcular posición de drop (alrededor del monstruo)
+    const angle = Math.random() * Math.PI * 2;
+    const distance = 0.5 + Math.random() * 1.5;
+    
+    const item: GroundItem = {
+      id: `drop_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+      itemId,
+      name: itemName,
+      quantity,
+      x: mob.x + Math.cos(angle) * distance,
+      y: 2.0, // Altura inicial (para animación de caída)
+      z: mob.z + Math.sin(angle) * distance,
+      velX: (Math.random() - 0.5) * 3,
+      velY: 8 + Math.random() * 4,
+      velZ: (Math.random() - 0.5) * 3,
+      bounceCount: 0
+    };
+
+    this.addGroundItem(item);
   }
 
   // --- GETTERS ---
 
-  getGroundItems(): GroundItem[] {
+  getGroundItems(): readonly GroundItem[] {
     return this.groundItems;
   }
 
   getGroundItemCount(): number {
     return this.groundItems.length;
+  }
+
+  getGroundItemsNearPlayer(radius: number = 3): GroundItem[] {
+    return this.groundItems.filter(item => {
+      const dist = Math.sqrt(
+        (item.x - this.playerEntity.x) ** 2 + (item.z - this.playerEntity.z) ** 2
+      );
+      return dist <= radius;
+    });
   }
 }
