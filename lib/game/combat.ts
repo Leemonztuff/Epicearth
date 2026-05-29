@@ -1,6 +1,7 @@
 import { Entity, Projectile, Skill } from './types';
 import { useGameStore } from './state';
 import { gameAudio } from './audio';
+import { gameEventBus } from './core/EventBus';
 
 export class CombatSystem {
   private playerEntity: Entity;
@@ -41,6 +42,23 @@ export class CombatSystem {
   getActiveCast() { return this.activeCast; }
   getProjectiles() { return this.projectiles; }
   getBattleModeEndTime() { return this.battleModeEndTime; }
+
+  cancelCast(reason: 'movement' | 'damage' | 'manual' = 'manual'): void {
+    if (!this.activeCast) return;
+    const skillName = this.activeCast.skillName;
+    this.activeCast = null;
+    useGameStore.setState({ activeCast: null });
+    gameEventBus.emit('effect:float_text', {
+      text: 'CANCELLED',
+      color: '#94a3b8',
+      x: this.playerEntity.x,
+      y: 2.5,
+      z: this.playerEntity.z
+    });
+    const store = useGameStore.getState();
+    store.addCombatLog(`¡[${skillName}] cancelado por ${reason === 'movement' ? 'movimiento' : reason}!`, 'system');
+    gameAudio.playFail();
+  }
 
   triggerSkillCast(skillId: string) {
     const store = useGameStore.getState();

@@ -10,6 +10,18 @@ interface ActiveTouch {
   isJoystick: boolean;
 }
 
+// ============================================================================
+// ENTITY LOOKUP INTERFACE
+// ============================================================================
+// Permite a InputHandler encontrar entidades por sprite sin violar
+// encapsulamiento del renderer. Renderer expone esta interfaz.
+// ============================================================================
+export interface EntityLookup {
+  getCamera(): THREE.PerspectiveCamera;
+  getEntitySprite(entityId: string): THREE.Sprite | undefined;
+  getSpriteEntityId(sprite: THREE.Sprite): string | undefined;
+}
+
 export class InputHandler {
   private raycaster = new THREE.Raycaster();
   private mouse = new THREE.Vector2();
@@ -17,6 +29,7 @@ export class InputHandler {
   private joystickTouchId: number | null = null;
 
   private renderer: THREE.WebGLRenderer;
+  private entityLookup: EntityLookup;
   private playerEntity: Entity;
   private monsters: Entity[];
   private npcs: Entity[];
@@ -30,12 +43,14 @@ export class InputHandler {
 
   constructor(
     renderer: THREE.WebGLRenderer,
+    entityLookup: EntityLookup,
     playerEntity: Entity,
     monsters: Entity[],
     npcs: Entity[],
     groundItems: { x: number; z: number; id: string }[]
   ) {
     this.renderer = renderer;
+    this.entityLookup = entityLookup;
     this.playerEntity = playerEntity;
     this.monsters = monsters;
     this.npcs = npcs;
@@ -174,30 +189,38 @@ export class InputHandler {
     const ndcY = -(screenY / height) * 2 + 1;
     this.mouse.set(ndcX, ndcY);
 
-    const camera = (this.renderer as any).__camera as THREE.PerspectiveCamera;
+    const camera = this.entityLookup.getCamera();
     if (!camera) return;
 
     this.raycaster.setFromCamera(this.mouse, camera);
 
-    const spriteArray = Object.keys((this.renderer as any).__entityMeshes || {})
-      .filter((id: string) => id !== 'player_main')
-      .map((id: string) => (this.renderer as any).__entityMeshes[id]);
+    // Build sprite array for raycasting (exclude player)
+    const spriteArray: THREE.Sprite[] = [];
+    const allEntities = [...this.monsters, ...this.npcs];
+    for (const entity of allEntities) {
+      const sprite = this.entityLookup.getEntitySprite(entity.id);
+      if (sprite) spriteArray.push(sprite);
+    }
 
     const mobHits = this.raycaster.intersectObjects(spriteArray);
     if (mobHits.length > 0) {
-      const selectedSprite = mobHits[0].object;
-      let matchedMob = this.monsters.find(m => (this.renderer as any).__entityMeshes[m.id] === selectedSprite);
-      let matchedNpc = !matchedMob ? this.npcs.find(n => (this.renderer as any).__entityMeshes[n.id] === selectedSprite) : undefined;
+      const selectedSprite = mobHits[0].object as THREE.Sprite;
+      const matchedEntityId = this.entityLookup.getSpriteEntityId(selectedSprite);
 
-      if (matchedMob && matchedMob.currentHp > 0) {
-        this.onTarget(matchedMob.id);
-        return;
-      }
-      if (matchedNpc) {
-        this.onMove({ x: matchedNpc.x, z: matchedNpc.z });
-        this.interactingNpcId = matchedNpc.id;
-        this.onNpcInteract(matchedNpc);
-        return;
+      if (matchedEntityId) {
+        const matchedMob = this.monsters.find(m => m.id === matchedEntityId);
+        const matchedNpc = !matchedMob ? this.npcs.find(n => n.id === matchedEntityId) : undefined;
+
+        if (matchedMob && matchedMob.currentHp > 0) {
+          this.onTarget(matchedMob.id);
+          return;
+        }
+        if (matchedNpc) {
+          this.onMove({ x: matchedNpc.x, z: matchedNpc.z });
+          this.interactingNpcId = matchedNpc.id;
+          this.onNpcInteract(matchedNpc);
+          return;
+        }
       }
     }
 

@@ -1,6 +1,7 @@
 import { Entity, Projectile, GroundItem, JobClass, Skill } from './types';
 import { useGameStore } from './state';
 import { gameAudio } from './audio';
+import { MonsterAI } from './server/MonsterAI';
 
 // ============================================================================
 // WORLD RUNTIME - MOTOR DE SIMULACIÓN REALTIME
@@ -198,6 +199,9 @@ export class WorldRuntime {
   private commandQueue: WorldCommand[] = [];
   private eventHandlers: WorldEventHandler[] = [];
 
+  // Battle mode end time (set by combat system)
+  private battleModeEndTime = 0;
+
   // Simulation state
   private isRunning = false;
   private tickCount = 0;
@@ -221,6 +225,9 @@ export class WorldRuntime {
     this.playerEntity = playerEntity;
     this.monsters = monsters;
     this.npcs = npcs;
+
+    // Initialize MonsterAI
+    this.monsterAI = new MonsterAI({ playerEntity, monsters });
 
     // Registrar todas las entidades iniciales
     this.entityManager.add(playerEntity);
@@ -270,6 +277,9 @@ export class WorldRuntime {
     }
   }
 
+  // --- MONSTER AI (delegated to MonsterAI system) ---
+  private monsterAI: MonsterAI | null = null;
+
   // --- UPDATE LOOP (motor central) ---
   update(dt: number, now: number) {
     if (!this.isRunning) return;
@@ -296,8 +306,10 @@ export class WorldRuntime {
       this.rebuildSpatialGrid();
     }
 
-    // 4. Tick AI de monstruos
-    this.tickMonsterAI(now, dt);
+    // 4. Tick AI de monstruos (delegated to MonsterAI)
+    if (this.monsterAI) {
+      this.monsterAI.tickMonsterAI(now, dt);
+    }
 
     // 5. Tick regeneración de HP/SP
     this.tickRegeneration(dt);
@@ -324,123 +336,6 @@ export class WorldRuntime {
     this.entityManager.getAll().forEach(e => {
       if (e.state !== 'death') this.spatialGrid.insert(e);
     });
-  }
-
-  // --- MONSTER AI ---
-  private tickMonsterAI(now: number, dt: number) {
-    if (this.playerEntity.state === 'death') {
-      this.monsters.forEach(m => { m.state = 'idle'; m.targetEntityId = null; });
-      return;
-    }
-
-    const tickScale = dt * 60.0;
-
-    this.monsters.forEach(mob => {
-      if (mob.currentHp <= 0) return;
-
-      const dist = Math.sqrt(
-        (this.playerEntity.x - mob.x) ** 2 + (this.playerEntity.z - mob.z) ** 2
-      );
-
-      const visionLimit = mob.type === 'boss_mvp' ? 16.0 : 6.0;
-      const isAggressive = mob.type === 'boss_mvp' || mob.mobType === 'pecopeco';
-
-      if (dist <= visionLimit && (isAggressive || mob.targetEntityId)) {
-        mob.targetEntityId = 'player_main';
-        const combatReach = mob.type === 'boss_mvp' ? 2.8 : 1.8;
-
-        if (dist <= combatReach) {
-          // Atacar jugador
-          this.monsterAttack(mob, now);
-        } else {
-          // Acercarse al jugador
-          this.monsterChase(mob, dist, tickScale);
-        }
-      } else {
-        // Wandering idle
-        this.monsterWander(mob, tickScale);
-      }
-    });
-  }
-
-  private monsterAttack(mob: Entity, now: number) {
-    mob.state = 'attack';
-    const isBoss = mob.type === 'boss_mvp';
-    const rechargeCooldown = isBoss ? 450 : 1200;
-
-    if (mob.animationTimer > rechargeCooldown * 0.001) {
-      mob.animationTimer = 0;
-      const store = useGameStore.getState();
-      const hitScore = 150 + (isBoss ? 120 : 15);
-      const fleeScore = store.stats.flee;
-      const dodgePercent = Math.min(0.95, Math.max(0.05, (fleeScore - hitScore + 100) / 100));
-      const playerEvaded = Math.random() < dodgePercent;
-
-      if (playerEvaded) {
-        this.emit({ type: 'entity_damaged', entityId: this.playerEntity.id, damage: 0, isCrit: false });
-        store.addCombatLog(`[${mob.name}] te ataca y evades su golpe (FLEE).`, 'system');
-      } else {
-        const strikeAtk = isBoss ? 280 : (mob.mobType === 'pecopeco' ? 45 : 18);
-        const randVariation = Math.floor((Math.random() - 0.5) * strikeAtk * 0.1);
-        let rawDmg = strikeAtk + randVariation - (store.stats.def * 0.15);
-        let finalDmg = Math.floor(Math.max(1, rawDmg));
-
-        this.playerEntity.currentHp = Math.max(0, this.playerEntity.currentHp - finalDmg);
-        this.playerEntity.state = 'hit';
-        this.playerEntity.hitRecoveryEndTime = now + 240;
-
-        this.emit({ type: 'entity_damaged', entityId: this.playerEntity.id, damage: finalDmg, isCrit: false });
-        store.addCombatLog(`¡[${mob.name}] te propina un golpe brutal! Pierdes ${finalDmg} HP.`, 'player_hit');
-        store.setPlayerHpSp(this.playerEntity.currentHp, this.playerEntity.currentSp);
-
-        if (this.playerEntity.currentHp <= 0) {
-          this.emit({ type: 'entity_died', entityId: this.playerEntity.id, killerId: mob.id });
-        }
-      }
-    }
-  }
-
-  private monsterChase(mob: Entity, dist: number, tickScale: number) {
-    if (mob.state !== 'attack' && mob.hitRecoveryEndTime < performance.now()) {
-      mob.state = 'move';
-    }
-    const mSpeed = (mob.type === 'boss_mvp' ? 0.075 : 0.032) * tickScale;
-    mob.facing = this.playerEntity.x > mob.x ? 'right' : 'left';
-
-    const dx = this.playerEntity.x - mob.x;
-    const dz = this.playerEntity.z - mob.z;
-    mob.x += (dx / dist) * mSpeed;
-    mob.z += (dz / dist) * mSpeed;
-    mob.y = 0; // flat ground
-
-    this.emit({ type: 'entity_moved', entityId: mob.id, x: mob.x, z: mob.z });
-  }
-
-  private monsterWander(mob: Entity, tickScale: number) {
-    if (mob.hitRecoveryEndTime < performance.now()) {
-      if (Math.random() < 0.01 * tickScale) {
-        mob.state = 'move';
-        mob.targetX = mob.x + (Math.random() - 0.5) * 15;
-        mob.targetZ = mob.z + (Math.random() - 0.5) * 15;
-      }
-
-      if (mob.state === 'move' && mob.targetX !== undefined && mob.targetZ !== undefined) {
-        const mdx = mob.targetX - mob.x;
-        const mdz = mob.targetZ - mob.z;
-        const mdist = Math.sqrt(mdx * mdx + mdz * mdz);
-
-        if (mdist > 0.4) {
-          mob.facing = mdx > 0 ? 'right' : 'left';
-          mob.x += (mdx / mdist) * 0.015 * tickScale;
-          mob.z += (mdz / mdist) * 0.015 * tickScale;
-          mob.y = 0;
-        } else {
-          mob.state = 'idle';
-          mob.targetX = undefined;
-          mob.targetZ = undefined;
-        }
-      }
-    }
   }
 
   // --- REGENERACIÓN ---
@@ -584,7 +479,7 @@ export class WorldRuntime {
     const store = useGameStore.getState();
 
     // Battle mode decay
-    if (store.battleMode && performance.now() > (this as any).battleModeEndTime) {
+    if (store.battleMode && performance.now() > this.battleModeEndTime) {
       useGameStore.setState({ battleMode: false });
     }
 
@@ -592,6 +487,11 @@ export class WorldRuntime {
     this.entityManager.getAll().forEach(e => {
       e.animationTimer += dt;
     });
+  }
+
+  // --- PUBLIC SETTERS ---
+  setBattleModeEndTime(endTime: number) {
+    this.battleModeEndTime = endTime;
   }
 
   // --- QUERIES PÚBLICOS ---

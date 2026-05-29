@@ -3,7 +3,7 @@ import { useGameStore } from './state';
 import { GameRenderer } from './renderer';
 import { gameAudio } from './audio';
 import { WorldRuntime } from './worldRuntime';
-import { InputHandler } from './input';
+import { InputHandler, EntityLookup } from './input';
 import { CombatSystem } from './combat';
 import { NpcSystem } from './npc';
 import { EntitySpawner } from './spawner';
@@ -18,7 +18,7 @@ import { Entity, GroundItem, HeadgearId, Projectile } from './types';
 // a través de eventos y callbacks.
 // ============================================================================
 
-export class RagnarokEngine {
+export class RagnarokEngine implements EntityLookup {
   // Three.js Core
   private container: HTMLDivElement;
   private renderer!: THREE.WebGLRenderer;
@@ -52,6 +52,22 @@ export class RagnarokEngine {
   private readonly fixedTimeStep = 1 / 60;
   private screenShakeIntensity = 0;
   private interactingNpcId: string | null = null;
+
+  // EntityLookup implementation
+  getCamera(): THREE.PerspectiveCamera {
+    return this.camera;
+  }
+
+  getEntitySprite(entityId: string): THREE.Sprite | undefined {
+    return this.entityMeshes[entityId];
+  }
+
+  getSpriteEntityId(sprite: THREE.Sprite): string | undefined {
+    for (const [id, s] of Object.entries(this.entityMeshes)) {
+      if (s === sprite) return id;
+    }
+    return undefined;
+  }
 
   constructor(container: HTMLDivElement) {
     this.container = container;
@@ -165,9 +181,9 @@ export class RagnarokEngine {
       onClassChange: (job) => this.gameRenderer.createEntityTexture(this.playerEntity, store.headgear)
     });
 
-    // Init Input Handler
+    // Init Input Handler (pass engine as EntityLookup)
     this.inputHandler = new InputHandler(
-      this.renderer, this.playerEntity, this.monsters, this.npcs, this.groundItems
+      this.renderer, this, this.playerEntity, this.monsters, this.npcs, this.groundItems
     );
     this.inputHandler.setCallbacks({
       onMove: (coords) => this.handleMove(coords),
@@ -181,16 +197,10 @@ export class RagnarokEngine {
   // --- 4. INPUT HANDLERS ---
   private handleMove(coords: { x: number; z: number }) {
     if (this.playerEntity.state === 'death') return;
-    const store = useGameStore.getState();
 
-    // Cancel active casting
-    const activeCast = this.combatSystem.getActiveCast();
-    if (activeCast) {
-      this.combatSystem['activeCast'] = null;
-      useGameStore.setState({ activeCast: null });
-      this.effectsSystem.spawnFloatingText('CANCELLED', '#94a3b8', 1.0, this.playerEntity.x, 2.5, this.playerEntity.z);
-      store.addCombatLog(`¡[${activeCast.skillName}] cancelado por movimiento!`, 'system');
-      gameAudio.playFail();
+    // Cancel active casting via proper method (no direct private access)
+    if (this.combatSystem.getActiveCast()) {
+      this.combatSystem.cancelCast('movement');
     }
 
     this.playerEntity.targetX = coords.x;
@@ -248,13 +258,12 @@ export class RagnarokEngine {
     const store = useGameStore.getState();
     const tickScale = dt * 60;
 
-    // 1. World Runtime update
-    this.worldRuntime.update(dt, now);
-
-    // 2. Combat systems
+    // 1. Combat systems (casting, auto-attack)
     this.combatSystem.tickActiveCasting(dt);
     this.combatSystem.tickAutoCombat(now, dt);
-    this.worldRuntime.update(dt, now); // handles projectiles, buffs, regen
+
+    // 2. World Runtime update (AI, projectiles, buffs, regen, loot)
+    this.worldRuntime.update(dt, now);
 
     // 3. Player movement
     this.tickPlayerMovement(dt, tickScale, now);
@@ -276,13 +285,9 @@ export class RagnarokEngine {
 
     // Joystick movement
     if (store.isJoystickEnabled && store.joystick.isActive) {
-      const activeCast = this.combatSystem.getActiveCast();
-      if (activeCast) {
-        this.combatSystem['activeCast'] = null;
-        useGameStore.setState({ activeCast: null });
-        this.effectsSystem.spawnFloatingText('CANCELLED', '#94a3b8', 1.0, this.playerEntity.x, 2.5, this.playerEntity.z);
-        store.addCombatLog(`¡[${activeCast.skillName}] cancelado por movimiento!`, 'system');
-        gameAudio.playFail();
+      // Cancel active casting via proper method
+      if (this.combatSystem.getActiveCast()) {
+        this.combatSystem.cancelCast('movement');
       }
 
       this.playerEntity.targetX = undefined;
