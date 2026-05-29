@@ -2,18 +2,40 @@ import { Entity, Projectile, GroundItem, JobClass, Skill } from './types';
 import { useGameStore } from './state';
 import { gameAudio } from './audio';
 
-// Command pattern definitions for modularity and multiplayer networking preparedness
+// ============================================================================
+// WORLD RUNTIME - MOTOR DE SIMULACIÓN REALTIME
+// ============================================================================
+// Arquitectura de motor de videojuego, NO de aplicación web.
+// Responsabilidades: registrar entidades, update loop, collision,
+// AI, combat, spatial partitioning, entity lifecycle.
+// ============================================================================
+
+// --- COMMAND PATTERN (preparado para networking/multiplayer) ---
 export interface WorldCommand {
-  type: 'player_move' | 'use_skill' | 'use_item' | 'npc_interact' | 'respawn';
+  type: 'player_move' | 'use_skill' | 'use_item' | 'npc_interact' | 'respawn' | 'spawn_entity' | 'despawn_entity';
   payload: any;
+  timestamp: number;
+  sourceId?: string; // para networking: quién ejecutó
 }
 
-/**
- * 1. HIGH-PERFORMANCE UNIFORM GRID STATIC/DYNAMIC SPATIAL PARTITIONING
- * Divides the (x, z) coordinate plane into 8x8 meter bucketing sectors.
- * Greatly reduces expensive broad-phase search complexity from O(N^2) to near O(1) inside active areas,
- * directly targeting mobile browser processor budget savings.
- */
+// --- EVENT SYSTEM (desacoplado, observer pattern) ---
+export type WorldEvent =
+  | { type: 'entity_spawned'; entityId: string }
+  | { type: 'entity_despawned'; entityId: string }
+  | { type: 'entity_damaged'; entityId: string; damage: number; isCrit: boolean }
+  | { type: 'entity_healed'; entityId: string; amount: number }
+  | { type: 'entity_died'; entityId: string; killerId?: string }
+  | { type: 'entity_moved'; entityId: string; x: number; z: number }
+  | { type: 'combat_start'; entityId: string; targetId: string }
+  | { type: 'combat_end'; entityId: string }
+  | { type: 'loot_dropped'; itemId: string; x: number; z: number }
+  | { type: 'level_up'; entityId: string; newLevel: number }
+  | { type: 'buff_applied'; entityId: string; buffId: string }
+  | { type: 'buff_expired'; entityId: string; buffId: string };
+
+export type WorldEventHandler = (event: WorldEvent) => void;
+
+// --- SPATIAL GRID (partición espacial uniforme, O(1) lookup) ---
 export class SpatialGrid {
   private cellSize: number;
   private cells: Map<string, Set<Entity>>;
@@ -23,351 +45,385 @@ export class SpatialGrid {
     this.cells = new Map();
   }
 
-  private getCellKey(x: number, z: number): string {
-    const cx = Math.floor(x / this.cellSize);
-    const cz = Math.floor(z / this.cellSize);
-    return `${cx},${cz}`;
-  }
+  clear() { this.cells.clear(); }
 
-  // Clear all cell registers
-  public clear() {
-    this.cells.clear();
-  }
-
-  // Register an active entity into the grid indexes
-  public insert(entity: Entity) {
-    const key = this.getCellKey(entity.x, entity.z);
-    if (!this.cells.has(key)) {
-      this.cells.set(key, new Set());
-    }
+  insert(entity: Entity) {
+    const key = this.getKey(entity.x, entity.z);
+    if (!this.cells.has(key)) this.cells.set(key, new Set());
     this.cells.get(key)!.add(entity);
   }
 
-  // Desynchronize an entity's position from the grid
-  public remove(entity: Entity): boolean {
-    const key = this.getCellKey(entity.x, entity.z);
+  remove(entity: Entity): boolean {
+    const key = this.getKey(entity.x, entity.z);
     const cell = this.cells.get(key);
     if (cell) {
       const deleted = cell.delete(entity);
-      if (cell.size === 0) {
-        this.cells.delete(key);
-      }
+      if (cell.size === 0) this.cells.delete(key);
       return deleted;
     }
     return false;
   }
 
-  // Highly optimal cell traversal when coordinates change
-  public updateEntityPosition(entity: Entity, oldX: number, oldZ: number) {
-    const oldKey = this.getCellKey(oldX, oldZ);
-    const newKey = this.getCellKey(entity.x, entity.z);
-
+  updateEntity(entity: Entity, oldX: number, oldZ: number) {
+    const oldKey = this.getKey(oldX, oldZ);
+    const newKey = this.getKey(entity.x, entity.z);
     if (oldKey !== newKey) {
       const oldCell = this.cells.get(oldKey);
       if (oldCell) {
         oldCell.delete(entity);
         if (oldCell.size === 0) this.cells.delete(oldKey);
       }
-      if (!this.cells.has(newKey)) {
-        this.cells.set(newKey, new Set());
-      }
+      if (!this.cells.has(newKey)) this.cells.set(newKey, new Set());
       this.cells.get(newKey)!.add(entity);
     }
   }
 
-  // Queries all entities situated within a query radius
-  public queryRadius(centerX: number, centerZ: number, radius: number): Entity[] {
+  queryRadius(cx: number, cz: number, radius: number): Entity[] {
     const result: Entity[] = [];
-    const minCellX = Math.floor((centerX - radius) / this.cellSize);
-    const maxCellX = Math.floor((centerX + radius) / this.cellSize);
-    const minCellZ = Math.floor((centerZ - radius) / this.cellSize);
-    const maxCellZ = Math.floor((centerZ + radius) / this.cellSize);
+    const minCX = Math.floor((cx - radius) / this.cellSize);
+    const maxCX = Math.floor((cx + radius) / this.cellSize);
+    const minCZ = Math.floor((cz - radius) / this.cellSize);
+    const maxCZ = Math.floor((cz + radius) / this.cellSize);
+    const r2 = radius * radius;
 
-    for (let cx = minCellX; cx <= maxCellX; cx++) {
-      for (let cz = minCellZ; cz <= maxCellZ; cz++) {
-        const key = `${cx},${cz}`;
-        const cell = this.cells.get(key);
-        if (cell) {
-          cell.forEach(entity => {
-            const dx = entity.x - centerX;
-            const dz = entity.z - centerZ;
-            const distSq = dx * dx + dz * dz;
-            if (distSq <= radius * radius) {
-              result.push(entity);
-            }
-          });
+    for (let ix = minCX; ix <= maxCX; ix++) {
+      for (let iz = minCZ; iz <= maxCZ; iz++) {
+        const cell = this.cells.get(`${ix},${iz}`);
+        if (!cell) continue;
+        const entities = Array.from(cell);
+        for (let i = 0; i < entities.length; i++) {
+          const e = entities[i];
+          const dx = e.x - cx;
+          const dz = e.z - cz;
+          if (dx * dx + dz * dz <= r2) result.push(e);
         }
       }
     }
     return result;
   }
+
+  queryRect(x1: number, z1: number, x2: number, z2: number): Entity[] {
+    const result: Entity[] = [];
+    const minX = Math.min(x1, x2);
+    const maxX = Math.max(x1, x2);
+    const minZ = Math.min(z1, z2);
+    const maxZ = Math.max(z1, z2);
+    const minCX = Math.floor(minX / this.cellSize);
+    const maxCX = Math.floor(maxX / this.cellSize);
+    const minCZ = Math.floor(minZ / this.cellSize);
+    const maxCZ = Math.floor(maxZ / this.cellSize);
+
+    for (let ix = minCX; ix <= maxCX; ix++) {
+      for (let iz = minCZ; iz <= maxCZ; iz++) {
+        const cell = this.cells.get(`${ix},${iz}`);
+        if (!cell) continue;
+        const entities = Array.from(cell);
+        for (let i = 0; i < entities.length; i++) {
+          const e = entities[i];
+          if (e.x >= minX && e.x <= maxX && e.z >= minZ && e.z <= maxZ) {
+            result.push(e);
+          }
+        }
+      }
+    }
+    return result;
+  }
+
+  getNeighbors(entity: Entity, radius: number): Entity[] {
+    return this.queryRadius(entity.x, entity.z, radius).filter(e => e.id !== entity.id);
+  }
+
+  private getKey(x: number, z: number): string {
+    return `${Math.floor(x / this.cellSize)},${Math.floor(z / this.cellSize)}`;
+  }
+
+  getStats() {
+    let totalEntities = 0;
+    this.cells.forEach(cell => { totalEntities += cell.size; });
+    return { cells: this.cells.size, entities: totalEntities };
+  }
 }
 
-/**
- * 2. MODULAR WORLD RUNTIME ENGINE SIMULATION CLASS
- * Orchestrates complete physics, path tracking, AI behaviors, entity lifecycles, and combat.
- * Completely detached from Three.js graphics to maintain architectural integrity and networking flexibility.
- */
+// --- ENTITY LIFECYCLE MANAGER ---
+export class EntityManager {
+  private entities = new Map<string, Entity>();
+  private pendingAdd: Entity[] = [];
+  private pendingRemove: string[] = [];
+
+  add(entity: Entity) {
+    this.pendingAdd.push(entity);
+  }
+
+  remove(entityId: string) {
+    this.pendingRemove.push(entityId);
+  }
+
+  get(entityId: string): Entity | undefined {
+    return this.entities.get(entityId);
+  }
+
+  getAll(): Entity[] {
+    return Array.from(this.entities.values());
+  }
+
+  getByType(type: Entity['type']): Entity[] {
+    return this.getAll().filter(e => e.type === type);
+  }
+
+  getAlive(): Entity[] {
+    return this.getAll().filter(e => e.currentHp > 0 && e.state !== 'death');
+  }
+
+  /** Aplica cambios pendientes al inicio del frame */
+  flush() {
+    for (const entity of this.pendingAdd) {
+      this.entities.set(entity.id, entity);
+    }
+    for (const id of this.pendingRemove) {
+      this.entities.delete(id);
+    }
+    this.pendingAdd = [];
+    this.pendingRemove = [];
+  }
+
+  clear() { this.entities.clear(); this.pendingAdd = []; this.pendingRemove = []; }
+  get count() { return this.entities.size; }
+}
+
+// --- WORLD RUNTIME (núcleo del motor) ---
 export class WorldRuntime {
-  public entities: Map<string, Entity> = new Map();
-  public projectiles: Projectile[] = [];
-  public groundItems: GroundItem[] = [];
-  
-  // High performance spatial broadcaster
-  public grid: SpatialGrid = new SpatialGrid(6);
-
-  // Command buffer queue (Multiplayer/Command execution framework)
+  // Core systems
+  private spatialGrid = new SpatialGrid(8);
+  private entityManager = new EntityManager();
   private commandQueue: WorldCommand[] = [];
+  private eventHandlers: WorldEventHandler[] = [];
 
-  // Callbacks for hooks out to the renderer (decoupled visualization)
-  private onEntitySpawn: ((entity: Entity) => void) | null = null;
-  private onEntityDespawn: ((entityId: string) => void) | null = null;
-  private onCombatHit: ((attacker: Entity, target: Entity, dmg: number, isCrit: boolean, skillName?: string) => void) | null = null;
-  private onLootDrop: ((item: GroundItem) => void) | null = null;
-  private onAudioTrigger: ((action: string) => void) | null = null;
+  // Simulation state
+  private isRunning = false;
+  private tickCount = 0;
+  private accumulator = 0;
+  private readonly fixedTimeStep = 1 / 60; // 60Hz simulation
+
+  // References to game systems (inyectados desde engine)
+  private playerEntity!: Entity;
+  private monsters: Entity[] = [];
+  private npcs: Entity[] = [];
+  private groundItems: GroundItem[] = [];
+  private projectiles: Projectile[] = [];
+
+  // Callbacks para efectos de audio/visual
+  private onAudioTrigger?: (action: string) => void;
 
   constructor() {}
 
-  // Set visual callback hooks
-  public setCallbacks(hooks: {
-    onEntitySpawn?: (entity: Entity) => void;
-    onEntityDespawn?: (entityId: string) => void;
-    onCombatHit?: (attacker: Entity, target: Entity, dmg: number, isCrit: boolean, skillName?: string) => void;
-    onLootDrop?: (item: GroundItem) => void;
-    onAudioTrigger?: (action: string) => void;
-  }) {
-    if (hooks.onEntitySpawn) this.onEntitySpawn = hooks.onEntitySpawn;
-    if (hooks.onEntityDespawn) this.onEntityDespawn = hooks.onEntityDespawn;
-    if (hooks.onCombatHit) this.onCombatHit = hooks.onCombatHit;
-    if (hooks.onLootDrop) this.onLootDrop = hooks.onLootDrop;
-    if (hooks.onAudioTrigger) this.onAudioTrigger = hooks.onAudioTrigger;
+  // --- INICIALIZACIÓN ---
+  init(playerEntity: Entity, monsters: Entity[], npcs: Entity[]) {
+    this.playerEntity = playerEntity;
+    this.monsters = monsters;
+    this.npcs = npcs;
+
+    // Registrar todas las entidades iniciales
+    this.entityManager.add(playerEntity);
+    monsters.forEach(m => this.entityManager.add(m));
+    npcs.forEach(n => this.entityManager.add(n));
+
+    this.rebuildSpatialGrid();
+    this.isRunning = true;
   }
 
-  // --- ENTITY LIFECYCLE MANAGEMENT ---
-  
-  public getEntity(id: string): Entity | undefined {
-    return this.entities.get(id);
+  setCallbacks(callbacks: { onAudioTrigger?: (action: string) => void }) {
+    this.onAudioTrigger = callbacks.onAudioTrigger;
   }
 
-  public getPlayer(): Entity | undefined {
-    return this.getEntity('player_main');
+  // --- EVENT SYSTEM ---
+  onEvent(handler: WorldEventHandler) {
+    this.eventHandlers.push(handler);
   }
 
-  public registerEntity(entity: Entity) {
-    this.entities.set(entity.id, entity);
-    this.grid.insert(entity);
-    if (this.onEntitySpawn) {
-      this.onEntitySpawn(entity);
-    }
+  private emit(event: WorldEvent) {
+    this.eventHandlers.forEach(h => h(event));
   }
 
-  public deregisterEntity(id: string) {
-    const entity = this.entities.get(id);
-    if (entity) {
-      this.grid.remove(entity);
-      this.entities.delete(id);
-      if (this.onEntityDespawn) {
-        this.onEntityDespawn(id);
-      }
-    }
+  // --- COMMAND QUEUE (preparado para multiplayer) ---
+  enqueueCommand(cmd: Omit<WorldCommand, 'timestamp'>) {
+    this.commandQueue.push({ ...cmd, timestamp: performance.now() });
   }
 
-  public clearAll() {
-    this.entities.clear();
-    this.projectiles = [];
-    this.groundItems = [];
-    this.grid.clear();
-  }
-
-  // --- ENQUEUE COMMANDS ---
-  public enqueueCommand(cmd: WorldCommand) {
-    this.commandQueue.push(cmd);
-  }
-
-  // --- MAIN LOOP UPDATE SIMULATION ---
-  public update(dt: number, now: number) {
-    // 1. Flush and execute commands sent to the runtime
-    this.processCommandQueue(now);
-
-    // 2. Clear out completely dissolved/decayed remnants
-    this.reapDecayedEntities(now);
-
-    // 3. Update spatial references of active bodies
-    this.synchronizeGrid();
-
-    // 4. Circular Collision Pushback (Resolving model crowd overlapping)
-    this.resolvePhysicalOverlaps(dt);
-
-    // 5. Run AI Decision trees (Sensors -> Behavior Trees for roamers)
-    this.tickAI(now, dt);
-
-    // 6. Projectiles Flight physics simulation and impact triggers
-    this.tickProjectiles(dt);
-
-    // 7. Ground items bouncing and loot pickups
-    this.tickGroundItems(dt);
-  }
-
-  // --- PROCESS INCOMING ACTION PACKETS ---
-  private processCommandQueue(now: number) {
+  private processCommands() {
     while (this.commandQueue.length > 0) {
       const cmd = this.commandQueue.shift()!;
-      switch (cmd.type) {
-        case 'player_move': {
-          const player = this.getPlayer();
-          if (player && player.state !== 'death') {
-            player.targetX = cmd.payload.x;
-            player.targetZ = cmd.payload.z;
-            player.state = 'move';
-          }
-          break;
-        }
-        case 'respawn': {
-          const player = this.getPlayer();
-          if (player) {
-            player.state = 'idle';
-            player.x = 0;
-            player.z = 0;
-            player.currentHp = player.maxHp;
-            player.currentSp = player.maxSp;
-            player.targetEntityId = null;
-            player.targetX = undefined;
-            player.targetZ = undefined;
-          }
-          break;
-        }
-        // Easy expansion for multiplayer action validation goes here...
-      }
+      this.executeCommand(cmd);
     }
   }
 
-  // --- COMPACT SPATIAL GRID ALIGNMENT ---
-  private synchronizeGrid() {
-    Array.from(this.entities.values()).forEach(entity => {
-      if (entity.state === 'death') return;
-      
-      const lastX = (entity as any)._lastGridX ?? entity.x;
-      const lastZ = (entity as any)._lastGridZ ?? entity.z;
+  private executeCommand(cmd: WorldCommand) {
+    switch (cmd.type) {
+      case 'respawn':
+        this.emit({ type: 'entity_spawned', entityId: cmd.payload.entityId });
+        break;
+      case 'spawn_entity':
+        if (cmd.payload.entity) this.entityManager.add(cmd.payload.entity);
+        break;
+      case 'despawn_entity':
+        this.entityManager.remove(cmd.payload.entityId);
+        break;
+    }
+  }
 
-      if (lastX !== entity.x || lastZ !== entity.z) {
-        this.grid.updateEntityPosition(entity, lastX, lastZ);
-        (entity as any)._lastGridX = entity.x;
-        (entity as any)._lastGridZ = entity.z;
+  // --- UPDATE LOOP (motor central) ---
+  update(dt: number, now: number) {
+    if (!this.isRunning) return;
+
+    this.accumulator += dt;
+
+    while (this.accumulator >= this.fixedTimeStep) {
+      this.fixedTick(now, this.fixedTimeStep);
+      this.accumulator -= this.fixedTimeStep;
+    }
+
+    this.tickCount++;
+  }
+
+  private fixedTick(now: number, dt: number) {
+    // 1. Flush entity lifecycle changes
+    this.entityManager.flush();
+
+    // 2. Process command queue
+    this.processCommands();
+
+    // 3. Rebuild spatial grid cada N frames para performance
+    if (this.tickCount % 3 === 0) {
+      this.rebuildSpatialGrid();
+    }
+
+    // 4. Tick AI de monstruos
+    this.tickMonsterAI(now, dt);
+
+    // 5. Tick regeneración de HP/SP
+    this.tickRegeneration(dt);
+
+    // 6. Tick decay de buffs
+    this.tickBuffDecay(dt);
+
+    // 7. Tick proyectiles
+    this.tickProjectiles(dt);
+
+    // 8. Tick loot physics
+    this.tickLootPhysics(dt);
+
+    // 9. Auto-pickup de items
+    this.tickLootPickup();
+
+    // 10. Tick cooldowns generales
+    this.tickCooldowns(dt);
+  }
+
+  // --- SPATIAL GRID REBUILD ---
+  private rebuildSpatialGrid() {
+    this.spatialGrid.clear();
+    this.entityManager.getAll().forEach(e => {
+      if (e.state !== 'death') this.spatialGrid.insert(e);
+    });
+  }
+
+  // --- MONSTER AI ---
+  private tickMonsterAI(now: number, dt: number) {
+    if (this.playerEntity.state === 'death') {
+      this.monsters.forEach(m => { m.state = 'idle'; m.targetEntityId = null; });
+      return;
+    }
+
+    const tickScale = dt * 60.0;
+
+    this.monsters.forEach(mob => {
+      if (mob.currentHp <= 0) return;
+
+      const dist = Math.sqrt(
+        (this.playerEntity.x - mob.x) ** 2 + (this.playerEntity.z - mob.z) ** 2
+      );
+
+      const visionLimit = mob.type === 'boss_mvp' ? 16.0 : 6.0;
+      const isAggressive = mob.type === 'boss_mvp' || mob.mobType === 'pecopeco';
+
+      if (dist <= visionLimit && (isAggressive || mob.targetEntityId)) {
+        mob.targetEntityId = 'player_main';
+        const combatReach = mob.type === 'boss_mvp' ? 2.8 : 1.8;
+
+        if (dist <= combatReach) {
+          // Atacar jugador
+          this.monsterAttack(mob, now);
+        } else {
+          // Acercarse al jugador
+          this.monsterChase(mob, dist, tickScale);
+        }
+      } else {
+        // Wandering idle
+        this.monsterWander(mob, tickScale);
       }
     });
   }
 
-  /**
-   * 3. REALTIME CIRCULAR PENETRATION RESOLVER
-   * Resolves physical collision intersections between roamers and local bodies.
-   * Creates a highly organic crowding feedback where monsters bounce off and slide next to one another.
-   */
-  private resolvePhysicalOverlaps(dt: number) {
-    const list = Array.from(this.entities.values()).filter(e => e.state !== 'death');
-    const radius = 0.65; // physical envelope threshold
-    const pushForce = 0.55 * (dt * 60.0);
+  private monsterAttack(mob: Entity, now: number) {
+    mob.state = 'attack';
+    const isBoss = mob.type === 'boss_mvp';
+    const rechargeCooldown = isBoss ? 450 : 1200;
 
-    for (let i = 0; i < list.length; i++) {
-      const a = list[i];
-      for (let j = i + 1; j < list.length; j++) {
-        const b = list[j];
-        
-        // NPC entities are physically locked solid static anchors
-        if (a.type === 'npc' && b.type === 'npc') continue;
+    if (mob.animationTimer > rechargeCooldown * 0.001) {
+      mob.animationTimer = 0;
+      const store = useGameStore.getState();
+      const hitScore = 150 + (isBoss ? 120 : 15);
+      const fleeScore = store.stats.flee;
+      const dodgePercent = Math.min(0.95, Math.max(0.05, (fleeScore - hitScore + 100) / 100));
+      const playerEvaded = Math.random() < dodgePercent;
 
-        const dx = b.x - a.x;
-        const dz = b.z - a.z;
-        const distSq = dx * dx + dz * dz;
-        const minDist = a.type === 'boss_mvp' || b.type === 'boss_mvp' ? 1.85 : (radius * 2);
+      if (playerEvaded) {
+        this.emit({ type: 'entity_damaged', entityId: this.playerEntity.id, damage: 0, isCrit: false });
+        store.addCombatLog(`[${mob.name}] te ataca y evades su golpe (FLEE).`, 'system');
+      } else {
+        const strikeAtk = isBoss ? 280 : (mob.mobType === 'pecopeco' ? 45 : 18);
+        const randVariation = Math.floor((Math.random() - 0.5) * strikeAtk * 0.1);
+        let rawDmg = strikeAtk + randVariation - (store.stats.def * 0.15);
+        let finalDmg = Math.floor(Math.max(1, rawDmg));
 
-        if (distSq < minDist * minDist && distSq > 0.001) {
-          const dist = Math.sqrt(distSq);
-          const overlap = minDist - dist;
+        this.playerEntity.currentHp = Math.max(0, this.playerEntity.currentHp - finalDmg);
+        this.playerEntity.state = 'hit';
+        this.playerEntity.hitRecoveryEndTime = now + 240;
 
-          // Unit vectors
-          const ux = dx / dist;
-          const uz = dz / dist;
+        this.emit({ type: 'entity_damaged', entityId: this.playerEntity.id, damage: finalDmg, isCrit: false });
+        store.addCombatLog(`¡[${mob.name}] te propina un golpe brutal! Pierdes ${finalDmg} HP.`, 'player_hit');
+        store.setPlayerHpSp(this.playerEntity.currentHp, this.playerEntity.currentSp);
 
-          // Push them apart gently
-          const pushDistance = overlap * pushForce * 0.45;
-          
-          if (a.type !== 'npc') {
-            a.x -= ux * pushDistance;
-            a.z -= uz * pushDistance;
-          }
-          if (b.type !== 'npc') {
-            b.x += ux * pushDistance;
-            b.z += uz * pushDistance;
-          }
+        if (this.playerEntity.currentHp <= 0) {
+          this.emit({ type: 'entity_died', entityId: this.playerEntity.id, killerId: mob.id });
         }
       }
     }
   }
 
-  /**
-   * 4. DECUPLED MODULAR AI STATE MACHINERY
-   * Sensors scan radial grids around monsters. Players are locked on and pursued if close,
-   * otherwise roamers slide into an idle-walk randomized pacing state.
-   */
-  private tickAI(now: number, dt: number) {
-    const player = this.getPlayer();
-    const tickScale = dt * 60.0;
+  private monsterChase(mob: Entity, dist: number, tickScale: number) {
+    if (mob.state !== 'attack' && mob.hitRecoveryEndTime < performance.now()) {
+      mob.state = 'move';
+    }
+    const mSpeed = (mob.type === 'boss_mvp' ? 0.075 : 0.032) * tickScale;
+    mob.facing = this.playerEntity.x > mob.x ? 'right' : 'left';
 
-    Array.from(this.entities.values()).forEach(mob => {
-      if (mob.type !== 'monster' && mob.type !== 'boss_mvp') return;
-      if (mob.state === 'death') return;
+    const dx = this.playerEntity.x - mob.x;
+    const dz = this.playerEntity.z - mob.z;
+    mob.x += (dx / dist) * mSpeed;
+    mob.z += (dz / dist) * mSpeed;
+    mob.y = 0; // flat ground
 
-      const isStunned = mob.hitRecoveryEndTime > now;
-      if (isStunned) return; // Hit recovery interrupt
+    this.emit({ type: 'entity_moved', entityId: mob.id, x: mob.x, z: mob.z });
+  }
 
-      // AI Scanner: detect nearby targeted players (Alert range: MVP 15m, minions 8m)
-      const alertRange = mob.type === 'boss_mvp' ? 15 : 8;
-      
-      if (player && player.state !== 'death') {
-        const dx = player.x - mob.x;
-        const dz = player.z - mob.z;
-        const pDist = Math.sqrt(dx * dx + dz * dz);
-
-        // Retaliation check or direct aggression within scanning sweep
-        const isAggro = mob.targetEntityId === player.id || pDist <= alertRange;
-
-        if (isAggro) {
-          mob.targetEntityId = player.id;
-          
-          const attackReach = mob.type === 'boss_mvp' ? 2.5 : 1.35;
-          if (pDist <= attackReach) {
-            // Within striking parameters: activate real-time combat tick
-            mob.state = 'attack';
-            mob.targetX = undefined;
-            mob.targetZ = undefined;
-            mob.facing = dx > 0 ? 'right' : 'left';
-          } else {
-            // Out of range: Pathfind direct approach coordinates
-            mob.state = 'move';
-            mob.targetX = player.x;
-            mob.targetZ = player.z;
-
-            // Step translation
-            mob.facing = dx > 0 ? 'right' : 'left';
-            const mSpeed = (mob.type === 'boss_mvp' ? 0.055 : 0.034) * tickScale;
-            mob.x += (dx / pDist) * mSpeed;
-            mob.z += (dz / pDist) * mSpeed;
-          }
-          return; // Bypasses default lazy roaming routines
-        }
-      }
-
-      // Lazy Roaming: Monster slides into a classic slow periodic wander if unprovoked
-      const randVal = Math.random();
-      const wanderTrigger = 0.008 * tickScale;
-
-      if (randVal < wanderTrigger) {
+  private monsterWander(mob: Entity, tickScale: number) {
+    if (mob.hitRecoveryEndTime < performance.now()) {
+      if (Math.random() < 0.01 * tickScale) {
         mob.state = 'move';
-        mob.targetX = mob.x + (Math.random() - 0.5) * 12;
-        mob.targetZ = mob.targetZ = mob.z + (Math.random() - 0.5) * 12;
+        mob.targetX = mob.x + (Math.random() - 0.5) * 15;
+        mob.targetZ = mob.z + (Math.random() - 0.5) * 15;
       }
 
-      // Walk toward wander target
       if (mob.state === 'move' && mob.targetX !== undefined && mob.targetZ !== undefined) {
         const mdx = mob.targetX - mob.x;
         const mdz = mob.targetZ - mob.z;
@@ -375,46 +431,99 @@ export class WorldRuntime {
 
         if (mdist > 0.4) {
           mob.facing = mdx > 0 ? 'right' : 'left';
-          const walkSpeed = 0.015 * tickScale;
-          mob.x += (mdx / mdist) * walkSpeed;
-          mob.z += (mdz / mdist) * walkSpeed;
+          mob.x += (mdx / mdist) * 0.015 * tickScale;
+          mob.z += (mdz / mdist) * 0.015 * tickScale;
+          mob.y = 0;
         } else {
           mob.state = 'idle';
           mob.targetX = undefined;
           mob.targetZ = undefined;
         }
       }
-    });
+    }
   }
 
-  // --- PROJECTILES TICK ENGINE ---
+  // --- REGENERACIÓN ---
+  private tickRegeneration(dt: number) {
+    if (this.playerEntity.state === 'death') return;
+    const store = useGameStore.getState();
+    const tickScale = dt * 60.0;
+
+    const hpRegenRate = (0.04 + store.stats.vit * 0.011) * tickScale;
+    this.playerEntity.currentHp = Math.min(this.playerEntity.maxHp, this.playerEntity.currentHp + hpRegenRate);
+
+    const spRegenRate = (0.018 + store.stats.int * 0.006) * tickScale;
+    this.playerEntity.currentSp = Math.min(this.playerEntity.maxSp, this.playerEntity.currentSp + spRegenRate);
+
+    store.setPlayerHpSp(this.playerEntity.currentHp, this.playerEntity.currentSp);
+  }
+
+  // --- BUFF DECAY ---
+  private tickBuffDecay(dt: number) {
+    const store = useGameStore.getState();
+    if (store.activeBuffs.length === 0) return;
+
+    const dtMs = dt * 1000;
+    let updatedBuffs = store.activeBuffs.map(b => ({ ...b, durationMs: b.durationMs - dtMs }));
+    const expired = updatedBuffs.filter(b => b.durationMs <= 0);
+    updatedBuffs = updatedBuffs.filter(b => b.durationMs > 0);
+
+    if (expired.length > 0) {
+      let agiSub = 0, strSub = 0, intSub = 0, dexSub = 0;
+      expired.forEach(e => {
+        store.addCombatLog(`⏳ El buff [${e.name}] ha expirado.`, 'system');
+        this.emit({ type: 'buff_expired', entityId: this.playerEntity.id, buffId: e.id });
+        if (e.id === 'increase_agi') agiSub += 20;
+        if (e.id === 'blessing') { strSub += 20; intSub += 20; dexSub += 20; }
+      });
+
+      store.updateStats({
+        agi: Math.max(1, store.stats.agi - agiSub),
+        str: Math.max(1, store.stats.str - strSub),
+        int: Math.max(1, store.stats.int - intSub),
+        dex: Math.max(1, store.stats.dex - dexSub)
+      });
+
+      this.playerEntity.maxHp = store.stats.maxHp;
+      this.playerEntity.maxSp = store.stats.maxSp;
+    }
+
+    useGameStore.setState({ activeBuffs: updatedBuffs });
+  }
+
+  // --- PROYECTILES ---
   private tickProjectiles(dt: number) {
     const tickScale = dt * 60.0;
-    
+
     for (let i = this.projectiles.length - 1; i >= 0; i--) {
       const proj = this.projectiles[i];
-      const target = this.entities.get(proj.targetEntityId);
+      let target: Entity | undefined;
+
+      if (this.playerEntity.id === proj.targetEntityId) {
+        target = this.playerEntity;
+      } else {
+        target = this.monsters.find(m => m.id === proj.targetEntityId);
+      }
+
       const speedScale = proj.speed * tickScale;
 
       if (!target || target.currentHp <= 0 || target.state === 'death') {
-        proj.y -= 0.16 * speedScale;
-        if (proj.y <= 0) {
-          this.projectiles.splice(i, 1);
-        }
+        proj.y -= 0.15 * speedScale;
+        if (proj.y <= 0) this.projectiles.splice(i, 1);
         continue;
       }
 
-      const reachOffset = target.type === 'boss_mvp' ? 1.6 : 0.85;
-      const tY = target.y + reachOffset;
+      const targetHeightOffset = target.type === 'boss_mvp' ? 1.6 : 0.85;
+      const tY = target.y + targetHeightOffset;
       const pdx = target.x - proj.x;
       const pdy = tY - proj.y;
       const pdz = target.z - proj.z;
       const pdist = Math.sqrt(pdx * pdx + pdy * pdy + pdz * pdz);
 
-      if (pdist < speedScale * 1.35) {
-        // Projectile hit resolves
+      if (pdist < speedScale * 1.25) {
+        // Impacto - emitir evento para que el combat system resuelva
+        this.emit({ type: 'entity_damaged', entityId: target.id, damage: proj.damage, isCrit: proj.isCrit });
         this.projectiles.splice(i, 1);
-        this.applyTerminalDmg(proj, target);
       } else {
         proj.x += (pdx / pdist) * speedScale;
         proj.y += (pdy / pdist) * speedScale;
@@ -423,33 +532,14 @@ export class WorldRuntime {
     }
   }
 
-  // Apply terminal projectile calculations
-  private applyTerminalDmg(proj: Projectile, target: Entity) {
-    const attacker = this.entities.get(proj.ownerEntityId);
-    if (!attacker) return;
-
-    target.currentHp = Math.max(0, target.currentHp - proj.damage);
-    target.state = 'hit';
-    target.hitRecoveryEndTime = performance.now() + 250;
-
-    if (this.onCombatHit) {
-      this.onCombatHit(attacker, target, proj.damage, proj.isCrit);
-    }
-  }
-
-  // --- LOOT BOUNCES AND PICKUPS ---
-  private tickGroundItems(dt: number) {
-    const player = this.getPlayer();
+  // --- LOOT PHYSICS ---
+  private tickLootPhysics(dt: number) {
     const tickScale = dt * 60.0;
 
-    for (let i = this.groundItems.length - 1; i >= 0; i--) {
-      const item = this.groundItems[i];
-
-      // Physical bouncing trajectory maths
+    this.groundItems.forEach(item => {
       if (item.velY !== undefined && item.velX !== undefined && item.velZ !== undefined) {
-        const gravity = -0.38;
-        item.velY += gravity * tickScale;
-
+        const gravityAcc = -0.38;
+        item.velY += gravityAcc * tickScale;
         item.x += item.velX * dt;
         item.y += item.velY * dt;
         item.z += item.velZ * dt;
@@ -461,7 +551,7 @@ export class WorldRuntime {
             item.velX *= 0.5;
             item.velZ *= 0.5;
             item.bounceCount++;
-            if (this.onAudioTrigger) this.onAudioTrigger('item_bounce');
+            this.onAudioTrigger?.('item_bounce');
           } else {
             item.velY = 0;
             item.velX = 0;
@@ -469,35 +559,100 @@ export class WorldRuntime {
           }
         }
       }
+    });
+  }
 
-      // Auto looting pickup radius detect
-      if (player && player.state !== 'death') {
-        const dist = Math.sqrt((item.x - player.x) ** 2 + (item.z - player.z) ** 2);
-        if (dist < 1.35) {
-          this.groundItems.splice(i, 1);
-          if (this.onLootDrop) {
-            this.onLootDrop(item);
-          }
-        }
+  // --- LOOT PICKUP ---
+  private tickLootPickup() {
+    const store = useGameStore.getState();
+
+    for (let i = this.groundItems.length - 1; i >= 0; i--) {
+      const item = this.groundItems[i];
+      const dist = Math.sqrt(
+        (item.x - this.playerEntity.x) ** 2 + (item.z - this.playerEntity.z) ** 2
+      );
+
+      if (dist < 1.35) {
+        store.addCombatLog(`¡Has recogido [${item.name}] x${item.quantity}!`, 'loot');
+        this.groundItems.splice(i, 1);
       }
     }
   }
 
-  // --- DISMISS DEAD MONSTERS AFTER DISSOLVING LAPSES ---
-  private reapDecayedEntities(now: number) {
-    Array.from(this.entities.values()).forEach(entity => {
-      if (entity.type === 'player' || entity.type === 'npc') return;
-      
-      if (entity.state === 'death') {
-        if (!(entity as any)._deathTimeStamp) {
-          (entity as any)._deathTimeStamp = now;
-        }
+  // --- COOLDOWNS ---
+  private tickCooldowns(dt: number) {
+    const store = useGameStore.getState();
 
-        const elapsedSinceDeath = now - (entity as any)._deathTimeStamp;
-        if (elapsedSinceDeath > 1800) { // 1.8 seconds decay and register wipeout
-          this.deregisterEntity(entity.id);
-        }
-      }
+    // Battle mode decay
+    if (store.battleMode && performance.now() > (this as any).battleModeEndTime) {
+      useGameStore.setState({ battleMode: false });
+    }
+
+    // Animation timers
+    this.entityManager.getAll().forEach(e => {
+      e.animationTimer += dt;
     });
+  }
+
+  // --- QUERIES PÚBLICOS ---
+  getEntitiesInRange(x: number, z: number, radius: number): Entity[] {
+    return this.spatialGrid.queryRadius(x, z, radius);
+  }
+
+  getEntitiesInRect(x1: number, z1: number, x2: number, z2: number): Entity[] {
+    return this.spatialGrid.queryRect(x1, z1, x2, z2);
+  }
+
+  getNearbyEnemies(x: number, z: number, radius: number): Entity[] {
+    return this.getEntitiesInRange(x, z, radius).filter(
+      e => e.type === 'monster' || e.type === 'boss_mvp'
+    );
+  }
+
+  getNearbyAllies(x: number, z: number, radius: number): Entity[] {
+    return this.getEntitiesInRange(x, z, radius).filter(
+      e => e.type === 'npc' || e.type === 'player'
+    );
+  }
+
+  getEntity(entityId: string): Entity | undefined {
+    return this.entityManager.get(entityId);
+  }
+
+  // --- LIFECYCLE ---
+  spawnProjectile(type: Projectile['type'], owner: Entity, target: Entity, damage: number, isCrit: boolean) {
+    const proj: Projectile = {
+      id: `proj_${Math.random()}_${Date.now()}`,
+      type, x: owner.x, y: owner.y + 1.1, z: owner.z,
+      speed: type === 'arrow' ? 0.38 : 0.28,
+      targetEntityId: target.id, ownerEntityId: owner.id,
+      damage, isCrit, spawnTime: Date.now(), height: 1.1
+    };
+    this.projectiles.push(proj);
+  }
+
+  addGroundItem(item: GroundItem) {
+    this.groundItems.push(item);
+    this.emit({ type: 'loot_dropped', itemId: item.itemId, x: item.x, z: item.z });
+  }
+
+  destroy() {
+    this.isRunning = false;
+    this.entityManager.clear();
+    this.spatialGrid.clear();
+    this.commandQueue = [];
+    this.eventHandlers = [];
+  }
+
+  // --- DEBUG ---
+  getDebugInfo() {
+    return {
+      tickCount: this.tickCount,
+      entities: this.entityManager.count,
+      spatialGrid: this.spatialGrid.getStats(),
+      projectiles: this.projectiles.length,
+      groundItems: this.groundItems.length,
+      commandQueue: this.commandQueue.length
+    };
   }
 }
