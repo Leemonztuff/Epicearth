@@ -5,7 +5,7 @@ import { motion, AnimatePresence } from 'motion/react';
 import { 
   Flame, Shield, Swords, Sparkles, Heart, Zap, 
   Settings, RefreshCw, Eye, Info, Layers, 
-  AlertTriangle, Play, FastForward, Pocket, HelpCircle
+  AlertTriangle, Play, FastForward, FlaskConical, HelpCircle
 } from 'lucide-react';
 
 import { useGameStore } from '../lib/game/state';
@@ -399,7 +399,7 @@ export default function GamePage() {
             className="w-12 h-12 rounded-full bg-linear-to-b from-red-500 to-rose-700 hover:from-red-400 hover:to-rose-600 shadow-lg active:scale-95 transition-all text-white border border-white/20 flex items-center justify-center cursor-pointer"
             id="drink-pot-btn"
           >
-            <Pocket className="w-5 h-5 shrink-0" />
+            <FlaskConical className="w-5 h-5 shrink-0" />
           </button>
         </div>
 
