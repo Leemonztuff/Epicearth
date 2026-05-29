@@ -105,6 +105,7 @@ export class MonsterAI {
         targetDef: stats.def || 0,
         targetStats: stats,
         skillMultiplier: 1.0,
+        isCrit: false,
       };
       const result = this.runtime.calculateDamage(dmgCalc, stats);
 

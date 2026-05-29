@@ -205,6 +205,7 @@ export class CombatSystem {
           targetDef: targetMob.maxHp,
           targetStats: {},
           skillMultiplier: 1.0,
+          isCrit: false,
         };
         const result = this.runtime.calculateDamage(dmgCalc, stats);
 

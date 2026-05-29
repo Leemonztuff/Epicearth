@@ -262,6 +262,7 @@ export class CombatRuntime {
       targetDef: target.maxHp || 0,
       targetStats: {},
       skillMultiplier: finalMultiplier,
+      isCrit: false,
     };
 
     const result = this.calculateDamage(dmgCalc, stats);
