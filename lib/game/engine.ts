@@ -154,7 +154,7 @@ export class RagnarokEngine implements EntityLookup {
     this.gameRenderer.createGroundMap();
 
     const store = this.context.store;
-    this.playerEntity = EntitySpawner.createPlayer(store.getJobClass());
+    this.playerEntity = EntitySpawner.createPlayer(store.getJobClass(), store.getStats());
     this.monsters = EntitySpawner.spawnRoamers(12);
     this.npcs = EntitySpawner.spawnNpcs();
 
@@ -202,16 +202,26 @@ export class RagnarokEngine implements EntityLookup {
     });
 
     // Init NPC System
-    this.npcSystem = new NpcSystem(this.playerEntity, this.npcs);
+    this.npcSystem = new NpcSystem({
+      playerEntity: this.playerEntity,
+      npcs: this.npcs,
+      context: this.context
+    });
     this.npcSystem.setCallbacks({
       onEffectSpawn: (type, x, z) => this.effectsSystem.spawnEffect(type, x, z),
       onClassChange: (job) => this.gameRenderer.createEntityTexture(this.playerEntity, store.getHeadgear())
     });
 
     // Init Input Handler (pass engine as EntityLookup)
-    this.inputHandler = new InputHandler(
-      this.renderer, this, this.playerEntity, this.monsters, this.npcs, this.groundItems
-    );
+    this.inputHandler = new InputHandler({
+      renderer: this.renderer,
+      entityLookup: this,
+      playerEntity: this.playerEntity,
+      monsters: this.monsters,
+      npcs: this.npcs,
+      groundItems: this.groundItems,
+      context: this.context
+    });
     this.inputHandler.setCallbacks({
       onMove: (coords) => this.playerController.handleMove(coords),
       onTarget: (targetId) => this.playerController.handleTarget(targetId),
@@ -412,11 +422,18 @@ export class RagnarokEngine implements EntityLookup {
   }
 
   drinkPotion() {
-    // Note: drinkPotion is a direct action on the store
-    // For now, we'll keep this as a special case since it's a UI action
-    // that directly modifies inventory state
-    const { useGameStore } = require('./state');
-    useGameStore.getState().drinkPotion();
+    const inventory = this.context.inventory;
+    const store = this.context.store;
+    
+    if (inventory.hasItem('red_potion')) {
+      inventory.removeItem('red_potion', 1);
+      const healAmount = 150;
+      const newHp = Math.min(store.getStats().maxHp, store.getCurrentHp() + healAmount);
+      store.setPlayerHpSp(newHp, store.getCurrentSp());
+      store.addCombatLog(`Usaste Red Potion: +${healAmount} HP`, 'heal');
+    } else {
+      store.addCombatLog('¡No tienes Red Potions!', 'system');
+    }
   }
 
   // --- 9. CLEANUP ---

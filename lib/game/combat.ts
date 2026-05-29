@@ -1,5 +1,4 @@
 import { Entity, Projectile, Skill } from './types';
-import { useGameStore } from './state';
 import { gameAudio } from './audio';
 import { gameEventBus } from './core/EventBus';
 import { GameContext } from './core/GameContext';
@@ -8,6 +7,7 @@ import { GameContext } from './core/GameContext';
 // COMBAT SYSTEM - Sistema de combate
 // ============================================================================
 // Maneja: auto-combate, skills, proyectiles, drops de monstruos.
+// Usa GameContext para acceso al state (sin imports directos de Zustand).
 // ============================================================================
 
 export interface CombatSystemConfig {
@@ -62,7 +62,6 @@ export class CombatSystem {
     if (!this.activeCast) return;
     const skillName = this.activeCast.skillName;
     this.activeCast = null;
-    useGameStore.setState({ activeCast: null });
     gameEventBus.emit('effect:float_text', {
       text: 'CANCELLED',
       color: '#94a3b8',
@@ -70,14 +69,13 @@ export class CombatSystem {
       y: 2.5,
       z: this.playerEntity.z
     });
-    const store = useGameStore.getState();
-    store.addCombatLog(`¡[${skillName}] cancelado por ${reason === 'movement' ? 'movimiento' : reason}!`, 'system');
+    this.context.store.addCombatLog(`¡[${skillName}] cancelado por ${reason === 'movement' ? 'movimiento' : reason}!`, 'system');
     gameAudio.playFail();
   }
 
   triggerSkillCast(skillId: string) {
-    const store = useGameStore.getState();
-    const skill = store.skills.find(s => s.id === skillId);
+    const store = this.context.store;
+    const skill = store.getSkills().find(s => s.id === skillId);
     if (!skill) return;
 
     if (this.playerEntity.currentSp < skill.spCost) {
@@ -140,11 +138,6 @@ export class CombatSystem {
         color: skill.color
       };
 
-      useGameStore.setState({
-        activeCast: { skillId, skillName: skill.name, durationMs: castTime, elapsedMs: 0, color: skill.color },
-        currentSp: this.playerEntity.currentSp
-      });
-
       store.addCombatLog(`Chanteando [${skill.name}]... ¡Tiempo de casteo: ${(castTime / 1000).toFixed(1)}s!`, 'skill');
       return;
     }
@@ -158,13 +151,11 @@ export class CombatSystem {
     if (!this.activeCast) return;
 
     this.activeCast.elapsedMs += dt * 1000;
-    useGameStore.setState({ activeCast: { ...this.activeCast, elapsedMs: this.activeCast.elapsedMs } });
 
     if (this.activeCast.elapsedMs >= this.activeCast.durationMs) {
       const skillId = this.activeCast.skillId;
       const targetId = this.activeCast.targetEntityId;
       this.activeCast = null;
-      useGameStore.setState({ activeCast: null });
       this.completeSkillExecution(skillId, targetId);
     }
   }
@@ -174,18 +165,18 @@ export class CombatSystem {
 
     const targetMob = this.monsters.find(m => m.id === this.playerEntity.targetEntityId);
     if (!targetMob || targetMob.currentHp <= 0) {
-      useGameStore.setState({ targetEntityId: null });
       this.playerEntity.targetEntityId = null;
       return;
     }
 
     const dist = Math.sqrt((targetMob.x - this.playerEntity.x) ** 2 + (targetMob.z - this.playerEntity.z) ** 2);
-    const store = useGameStore.getState();
-    const isSniper = store.jobClass === 'Sniper';
+    const store = this.context.store;
+    const stats = store.getStats();
+    const isSniper = store.getJobClass() === 'Sniper';
     const physicalReach = isSniper ? 9.0 : 2.2;
 
     if (dist <= physicalReach) {
-      const attackTimerCooldown = Math.max(250, 1000 * (2.2 - (store.stats.aspd * 0.01)));
+      const attackTimerCooldown = Math.max(250, 1000 * (2.2 - (stats.aspd * 0.01)));
 
       if (this.playerEntity.animationTimer > attackTimerCooldown * 0.001) {
         this.playerEntity.state = 'attack';
@@ -193,13 +184,13 @@ export class CombatSystem {
         this.playerEntity.hitRecoveryEndTime = now + 300;
         this.triggerBattleMode(now);
 
-        const hitChance = Math.min(1.0, Math.max(0.05, (store.stats.hit - (targetMob.maxHp * 0.1)) / 100));
+        const hitChance = Math.min(1.0, Math.max(0.05, (stats.hit - (targetMob.maxHp * 0.1)) / 100));
         const isHitSucceeded = Math.random() < hitChance;
 
         if (isHitSucceeded) {
-          const rawDmg = store.stats.atk;
+          const rawDmg = stats.atk;
           const randOffset = Math.floor((Math.random() - 0.5) * rawDmg * 0.15);
-          const isCrit = Math.random() < (store.stats.luk * 0.005 + 0.05);
+          const isCrit = Math.random() < (stats.luk * 0.005 + 0.05);
           let damage = Math.floor(rawDmg + randOffset);
           if (isCrit) damage = Math.floor(damage * 1.5);
 
@@ -240,8 +231,8 @@ export class CombatSystem {
   }
 
   completeSkillExecution(skillId: string, customTargetId: string | null) {
-    const store = useGameStore.getState();
-    const skill = store.skills.find(s => s.id === skillId);
+    const store = this.context.store;
+    const skill = store.getSkills().find(s => s.id === skillId);
     if (!skill) return;
 
     let targetMob: Entity | undefined;
@@ -258,6 +249,7 @@ export class CombatSystem {
     }
 
     const now = performance.now();
+    const stats = store.getStats();
     this.playerEntity.state = 'attack';
     this.playerEntity.hitRecoveryEndTime = now + 400;
     this.triggerBattleMode(now);
@@ -266,24 +258,24 @@ export class CombatSystem {
     this.onEffectSpawn(skillId, tx, tz);
 
     if (skillId === 'heal') {
-      const healAmt = Math.floor(this.playerEntity.maxHp * 0.35 + store.stats.int * 14);
+      const healAmt = Math.floor(this.playerEntity.maxHp * 0.35 + stats.int * 14);
       this.playerEntity.currentHp = Math.min(this.playerEntity.maxHp, this.playerEntity.currentHp + healAmt);
       this.onFloatingText(`+${healAmt}`, '#10b981', 1.8, this.playerEntity.x, 2.5, this.playerEntity.z);
       store.addCombatLog(`Lanzado Heal: +${healAmt} HP recuperados.`, 'heal');
       gameAudio.playHeal();
     } else if (targetMob && targetMob.currentHp > 0) {
       const multipliers: Record<string, number> = {
-        bash: 4.0 + (store.stats.str * 0.02),
-        double_strafe: 3.5 + (store.stats.dex * 0.035),
-        sonic_blow: 6.0 + (store.stats.str * 0.03),
+        bash: 4.0 + (stats.str * 0.02),
+        double_strafe: 3.5 + (stats.dex * 0.035),
+        sonic_blow: 6.0 + (stats.str * 0.03),
         grimtooth: 3.0,
-        holy_light: 2.8 + (store.stats.int * 0.03),
+        holy_light: 2.8 + (stats.int * 0.03),
         falcon_strike: 4.5
       };
       const multiplier = multipliers[skillId] || 2.0;
-      const rawDmg = Math.floor(store.stats.atk * multiplier);
+      const rawDmg = Math.floor(stats.atk * multiplier);
       const randOffset = Math.floor((Math.random() - 0.5) * rawDmg * 0.15);
-      const isCrit = Math.random() < (store.stats.luk * 0.005 + 0.05);
+      const isCrit = Math.random() < (stats.luk * 0.005 + 0.05);
       let damage = Math.max(1, rawDmg + randOffset - (skillId === 'falcon_strike' ? 0 : targetMob.maxHp * 0.05));
       if (isCrit) damage = Math.floor(damage * 1.5);
       damage = Math.floor(damage);
@@ -325,7 +317,7 @@ export class CombatSystem {
   }
 
   impactProjectile(proj: Projectile, target: Entity) {
-    const store = useGameStore.getState();
+    const store = this.context.store;
     target.currentHp = Math.max(0, target.currentHp - proj.damage);
     target.state = 'hit';
     target.hitRecoveryEndTime = Date.now() + 180;
@@ -343,9 +335,7 @@ export class CombatSystem {
     this.onScreenShake(proj.isCrit ? 0.32 : 0.08);
     gameAudio.playHit();
 
-    if (store.targetEntityId === target.id) {
-      store.updateTargetHp(target.currentHp);
-    }
+    store.updateTargetHp(target.currentHp);
 
     if (target.currentHp <= 0 && target.type !== 'player') {
       this.reapMonsterRewards(target);
@@ -354,7 +344,6 @@ export class CombatSystem {
 
   triggerBattleMode(now: number) {
     this.battleModeEndTime = now + 5000;
-    useGameStore.setState({ battleMode: true });
   }
 
   reapMonsterRewards(mob: Entity) {
@@ -387,14 +376,13 @@ export class CombatSystem {
       store.addCombatLog(`Matas a [${mob.name}]. +${expBase} EXP base, +${expJob} EXP job.`, 'system');
     }
 
-    // Drop items to ground (not directly to inventory)
+    // Drop items to ground
     const drops = this.getDropsForMob(mob);
     drops.forEach(drop => {
       lootSystem.dropItemFromMob(mob, drop.itemId, drop.name, drop.quantity);
       store.addCombatLog(`[Loot] ${drop.name} x${drop.quantity} cayó al suelo.`, 'loot');
     });
 
-    // Drop Zeny as visual indicator
     const zenyDrop = mob.type === 'boss_mvp' ? 5000 : (mob.mobType === 'poring' ? 10 : mob.mobType === 'poporing' ? 25 : 100);
     store.addCombatLog(`[Zeny] +${zenyDrop}z`, 'loot');
   }

@@ -1,9 +1,11 @@
-import { Entity } from './types';
-import { useGameStore } from './state';
+import { Entity, JobClass } from './types';
 import { gameAudio } from './audio';
+import { GameContext } from './core/GameContext';
 
 // ============================================================================
 // NPC SYSTEM - Interacciones y diálogos
+// ============================================================================
+// Usa GameContext para acceso al state (sin imports directos de Zustand).
 // ============================================================================
 
 export interface NpcDialogue {
@@ -14,21 +16,29 @@ export interface NpcDialogue {
   options: { label: string; actionParam: string }[];
 }
 
+export interface NpcSystemConfig {
+  playerEntity: Entity;
+  npcs: Entity[];
+  context: GameContext;
+}
+
 export class NpcSystem {
   private playerEntity: Entity;
   private npcs: Entity[];
+  private context: GameContext;
 
   private onEffectSpawn: (type: string, x: number, z: number) => void = () => {};
-  private onClassChange: (job: any) => void = () => {};
+  private onClassChange: (job: JobClass) => void = () => {};
 
-  constructor(playerEntity: Entity, npcs: Entity[]) {
-    this.playerEntity = playerEntity;
-    this.npcs = npcs;
+  constructor(config: NpcSystemConfig) {
+    this.playerEntity = config.playerEntity;
+    this.npcs = config.npcs;
+    this.context = config.context;
   }
 
   setCallbacks(callbacks: {
     onEffectSpawn?: (type: string, x: number, z: number) => void;
-    onClassChange?: (job: any) => void;
+    onClassChange?: (job: JobClass) => void;
   }) {
     if (callbacks.onEffectSpawn) this.onEffectSpawn = callbacks.onEffectSpawn;
     if (callbacks.onClassChange) this.onClassChange = callbacks.onClassChange;
@@ -39,8 +49,6 @@ export class NpcSystem {
   }
 
   openDialogue(npc: Entity): NpcDialogue | null {
-    const store = useGameStore.getState();
-
     if (npc.npcType === 'kafra') {
       gameAudio.playItemPickup();
       return {
@@ -78,7 +86,8 @@ export class NpcSystem {
   }
 
   handleAction(npcId: string, actionParam: string) {
-    const store = useGameStore.getState();
+    const store = this.context.store;
+    const inventory = this.context.inventory;
     store.setNpcDialogue(null);
 
     if (actionParam === 'close') {
@@ -104,14 +113,14 @@ export class NpcSystem {
         icon: '✝', description: '+20 STR/INT/DEX! ATK, curas y casteo acelerados.'
       });
 
-      const baseStats = store.stats;
+      const baseStats = store.getStats();
       store.updateStats({
         agi: baseStats.agi + 20, str: baseStats.str + 20,
         int: baseStats.int + 20, dex: baseStats.dex + 20
       });
 
-      this.playerEntity.maxHp = store.stats.maxHp;
-      this.playerEntity.maxSp = store.stats.maxSp;
+      this.playerEntity.maxHp = store.getStats().maxHp;
+      this.playerEntity.maxSp = store.getStats().maxSp;
     }
 
     if (actionParam === 'heal') {
@@ -123,27 +132,17 @@ export class NpcSystem {
       store.setPlayerHpSp(this.playerEntity.currentHp, this.playerEntity.currentSp);
 
       this.onEffectSpawn('heal', this.playerEntity.x, this.playerEntity.z);
-      store.setPotCount(15);
-
-      const updatedInventory = store.inventory.map(item =>
-        item.id === 'red_potion' ? { ...item, quantity: 15 } : item
-      );
-      useGameStore.setState({ inventory: updatedInventory });
+      inventory.addItem('red_potion', 15);
     }
 
     if (actionParam === 'buy_potions') {
       gameAudio.playItemPickup();
-      store.setPotCount(store.potCount + 15);
+      inventory.addItem('red_potion', 15);
       store.addCombatLog('🛒 Has reabastecido tu inventario con +15 Red Potions de la Kafra Clarice.', 'loot');
-
-      const updatedInventory = store.inventory.map(item =>
-        item.id === 'red_potion' ? { ...item, quantity: item.quantity + 15 } : item
-      );
-      useGameStore.setState({ inventory: updatedInventory });
     }
 
     if (actionParam.startsWith('class_')) {
-      const targetClassMap: Record<string, 'Lord Knight' | 'High Priest' | 'Assassin Cross' | 'Sniper'> = {
+      const targetClassMap: Record<string, JobClass> = {
         'class_lord_knight': 'Lord Knight',
         'class_high_priest': 'High Priest',
         'class_assassin': 'Assassin Cross',
@@ -154,10 +153,11 @@ export class NpcSystem {
       if (selectedClass) {
         store.setJobClass(selectedClass);
         this.playerEntity.job = selectedClass;
-        this.playerEntity.currentHp = store.stats.maxHp;
-        this.playerEntity.currentSp = store.stats.maxSp;
-        this.playerEntity.maxHp = store.stats.maxHp;
-        this.playerEntity.maxSp = store.stats.maxSp;
+        const stats = store.getStats();
+        this.playerEntity.currentHp = stats.maxHp;
+        this.playerEntity.currentSp = stats.maxSp;
+        this.playerEntity.maxHp = stats.maxHp;
+        this.playerEntity.maxSp = stats.maxSp;
         store.setPlayerHpSp(this.playerEntity.currentHp, this.playerEntity.currentSp);
 
         this.onEffectSpawn('level_up', this.playerEntity.x, this.playerEntity.z);

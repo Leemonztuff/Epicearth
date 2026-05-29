@@ -14,6 +14,7 @@ import { LootSystem } from '../shared/LootSystem';
 export interface GameStoreAPI {
   // Player state
   getJobClass(): JobClass;
+  setJobClass(job: JobClass): void;
   getStats(): CharacterStats;
   getHeadgear(): HeadgearId;
   getCurrentHp(): number;
@@ -45,7 +46,8 @@ export interface GameStoreAPI {
 
   // Settings
   isJoystickEnabled(): boolean;
-  getJoystickState(): { isActive: boolean; angle: number; distance: number };
+  getJoystickState(): { isActive: boolean; angle: number; distance: number; startX: number; startY: number; currentX: number; currentY: number; normalizedX: number; normalizedY: number };
+  updateJoystick(joystick: { isActive?: boolean; startX?: number; startY?: number; currentX?: number; currentY?: number; distance?: number; angle?: number; normalizedX?: number; normalizedY?: number }): void;
 
   // EXP
   addExp(base: number, job: number): void;
@@ -103,6 +105,7 @@ export function createGameContext(): GameContext {
   const store: GameStoreAPI = {
     // Player state
     getJobClass: () => getStore().jobClass,
+    setJobClass: (job) => getStore().setJobClass(job),
     getStats: () => getStore().stats,
     getHeadgear: () => getStore().headgear,
     getCurrentHp: () => getStore().currentHp,
@@ -138,6 +141,7 @@ export function createGameContext(): GameContext {
     // Settings
     isJoystickEnabled: () => getStore().isJoystickEnabled,
     getJoystickState: () => getStore().joystick,
+    updateJoystick: (joystick) => getStore().updateJoystick(joystick),
 
     // EXP
     addExp: (base, job) => getStore().addExp(base, job),

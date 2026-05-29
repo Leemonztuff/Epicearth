@@ -1,8 +1,9 @@
-import { Entity, GroundItem, HeadgearId, JobClass } from './types';
-import { useGameStore } from './state';
+import { Entity, GroundItem, HeadgearId, JobClass, CharacterStats } from './types';
 
 // ============================================================================
 // SPAWNER - Generación de entidades del mundo
+// ============================================================================
+// Factory pattern para crear entidades. No depende de Zustand directamente.
 // ============================================================================
 
 export class EntitySpawner {
@@ -12,17 +13,16 @@ export class EntitySpawner {
     return `${prefix}_${++this.idCounter}_${Date.now()}`;
   }
 
-  static createPlayer(jobClass: JobClass): Entity {
-    const store = useGameStore.getState();
+  static createPlayer(jobClass: JobClass, stats: CharacterStats): Entity {
     return {
       id: 'player_main',
       name: 'Rookie Hero',
       type: 'player',
       job: jobClass,
-      currentHp: store.stats.maxHp,
-      currentSp: store.stats.maxSp,
-      maxHp: store.stats.maxHp,
-      maxSp: store.stats.maxSp,
+      currentHp: stats.maxHp,
+      currentSp: stats.maxSp,
+      maxHp: stats.maxHp,
+      maxSp: stats.maxSp,
       facing: 'right',
       x: 0, y: 0, z: 0,
       state: 'idle',

@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { Entity, InputBufferItem, TouchIndicator } from './types';
-import { useGameStore } from './state';
+import { GameContext } from './core/GameContext';
 
 interface ActiveTouch {
   startX: number;
@@ -22,6 +22,16 @@ export interface EntityLookup {
   getSpriteEntityId(sprite: THREE.Sprite): string | undefined;
 }
 
+export interface InputHandlerConfig {
+  renderer: THREE.WebGLRenderer;
+  entityLookup: EntityLookup;
+  playerEntity: Entity;
+  monsters: Entity[];
+  npcs: Entity[];
+  groundItems: { x: number; z: number; id: string }[];
+  context: GameContext;
+}
+
 export class InputHandler {
   private raycaster = new THREE.Raycaster();
   private mouse = new THREE.Vector2();
@@ -34,6 +44,7 @@ export class InputHandler {
   private monsters: Entity[];
   private npcs: Entity[];
   private groundItems: { x: number; z: number; id: string }[];
+  private context: GameContext;
   private interactingNpcId: string | null = null;
 
   private onMove: (coords: { x: number; z: number }) => void = () => {};
@@ -41,20 +52,14 @@ export class InputHandler {
   private onNpcInteract: (npc: Entity) => void = () => {};
   private onItemLoot: (item: { x: number; z: number }) => void = () => {};
 
-  constructor(
-    renderer: THREE.WebGLRenderer,
-    entityLookup: EntityLookup,
-    playerEntity: Entity,
-    monsters: Entity[],
-    npcs: Entity[],
-    groundItems: { x: number; z: number; id: string }[]
-  ) {
-    this.renderer = renderer;
-    this.entityLookup = entityLookup;
-    this.playerEntity = playerEntity;
-    this.monsters = monsters;
-    this.npcs = npcs;
-    this.groundItems = groundItems;
+  constructor(config: InputHandlerConfig) {
+    this.renderer = config.renderer;
+    this.entityLookup = config.entityLookup;
+    this.playerEntity = config.playerEntity;
+    this.monsters = config.monsters;
+    this.npcs = config.npcs;
+    this.groundItems = config.groundItems;
+    this.context = config.context;
     this.setupListeners();
   }
 
@@ -95,14 +100,14 @@ export class InputHandler {
 
   private handleTouchStart(e: TouchEvent) {
     const rect = this.renderer.domElement.getBoundingClientRect();
-    const store = useGameStore.getState();
+    const store = this.context.store;
 
     Array.from(e.changedTouches).forEach((t) => {
       const touchX = t.clientX - rect.left;
       const touchY = t.clientY - rect.top;
 
       const isLeftZone = touchX < rect.width * 0.45;
-      const wantsJoystick = store.isJoystickEnabled && isLeftZone && this.joystickTouchId === null;
+      const wantsJoystick = store.isJoystickEnabled() && isLeftZone && this.joystickTouchId === null;
 
       if (wantsJoystick) {
         this.joystickTouchId = t.identifier;
@@ -129,7 +134,7 @@ export class InputHandler {
 
   private handleTouchMove(e: TouchEvent) {
     const rect = this.renderer.domElement.getBoundingClientRect();
-    const store = useGameStore.getState();
+    const store = this.context.store;
 
     Array.from(e.touches).forEach((t) => {
       const touchX = t.clientX - rect.left;
@@ -162,7 +167,7 @@ export class InputHandler {
   }
 
   private handleTouchEnd(e: TouchEvent) {
-    const store = useGameStore.getState();
+    const store = this.context.store;
 
     Array.from(e.changedTouches).forEach((t) => {
       if (t.identifier === this.joystickTouchId) {
