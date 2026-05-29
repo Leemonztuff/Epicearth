@@ -61,6 +61,7 @@ export class LootSystem {
 
   tickLootPickup(): void {
     const store = this.context.store;
+    const inventory = this.context.inventory;
 
     for (let i = this.groundItems.length - 1; i >= 0; i--) {
       const item = this.groundItems[i];
@@ -69,9 +70,14 @@ export class LootSystem {
       );
 
       if (dist < 1.35) {
-        store.addCombatLog(`¡Has recogido [${item.name}] x${item.quantity}!`, 'loot');
-        gameEventBus.emit('loot:picked', { entityId: this.playerEntity.id, itemId: item.itemId });
-        this.groundItems.splice(i, 1);
+        // Add to new inventory system
+        const added = inventory.addItem(item.itemId, item.quantity);
+        
+        if (added) {
+          store.addCombatLog(`¡Has recogido [${item.name}] x${item.quantity}!`, 'loot');
+          gameEventBus.emit('loot:picked', { entityId: this.playerEntity.id, itemId: item.itemId });
+          this.groundItems.splice(i, 1);
+        }
       }
     }
   }

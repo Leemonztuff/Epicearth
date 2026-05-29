@@ -2,10 +2,24 @@ import { Entity, Projectile, Skill } from './types';
 import { useGameStore } from './state';
 import { gameAudio } from './audio';
 import { gameEventBus } from './core/EventBus';
+import { GameContext } from './core/GameContext';
+
+// ============================================================================
+// COMBAT SYSTEM - Sistema de combate
+// ============================================================================
+// Maneja: auto-combate, skills, proyectiles, drops de monstruos.
+// ============================================================================
+
+export interface CombatSystemConfig {
+  playerEntity: Entity;
+  monsters: Entity[];
+  context: GameContext;
+}
 
 export class CombatSystem {
   private playerEntity: Entity;
   private monsters: Entity[];
+  private context: GameContext;
   private projectiles: Projectile[] = [];
   private activeCast: {
     skillId: string;
@@ -22,9 +36,10 @@ export class CombatSystem {
   private onProjectileSpawn: (type: Projectile['type'], owner: Entity, target: Entity, damage: number, isCrit: boolean) => void = () => {};
   private onScreenShake: (intensity: number) => void = () => {};
 
-  constructor(playerEntity: Entity, monsters: Entity[]) {
-    this.playerEntity = playerEntity;
-    this.monsters = monsters;
+  constructor(config: CombatSystemConfig) {
+    this.playerEntity = config.playerEntity;
+    this.monsters = config.monsters;
+    this.context = config.context;
   }
 
   setCallbacks(callbacks: {
@@ -343,7 +358,8 @@ export class CombatSystem {
   }
 
   reapMonsterRewards(mob: Entity) {
-    const store = useGameStore.getState();
+    const store = this.context.store;
+    const inventory = this.context.inventory;
     mob.state = 'death';
     this.playerEntity.targetEntityId = null;
     store.setTarget(null);
@@ -351,27 +367,58 @@ export class CombatSystem {
     const expBase = mob.type === 'boss_mvp' ? 12000 : (mob.mobType === 'poring' ? 15 : mob.mobType === 'poporing' ? 45 : 120);
     const expJob = mob.type === 'boss_mvp' ? 9500 : (mob.mobType === 'poring' ? 12 : mob.mobType === 'poporing' ? 36 : 95);
 
-    const curLevel = store.stats.level;
-    const curJobLvl = store.stats.jobLevel;
+    const curLevel = store.getStats().level;
+    const curJobLvl = store.getStats().jobLevel;
     store.addExp(expBase, expJob);
 
-    const updatedStore = useGameStore.getState();
-    const isLeveledUp = updatedStore.stats.level > curLevel || updatedStore.stats.jobLevel > curJobLvl;
+    const updatedStats = store.getStats();
+    const isLeveledUp = updatedStats.level > curLevel || updatedStats.jobLevel > curJobLvl;
 
     if (isLeveledUp) {
       gameAudio.playLevelUp();
-      store.addCombatLog(`✨ ¡PROGRESO NIVEL UP! Has alcanzado Base: ${updatedStore.stats.level} / Job: ${updatedStore.stats.jobLevel} ✨`, 'system');
+      store.addCombatLog(`✨ ¡PROGRESO NIVEL UP! Has alcanzado Base: ${updatedStats.level} / Job: ${updatedStats.jobLevel} ✨`, 'system');
       this.onFloatingText('★ LEVEL UP ★', '#eab308', 2.2, this.playerEntity.x, 3.2, this.playerEntity.z);
       this.onEffectSpawn('level_up', this.playerEntity.x, this.playerEntity.z);
 
-      this.playerEntity.currentHp = updatedStore.stats.maxHp;
-      this.playerEntity.currentSp = updatedStore.stats.maxSp;
-      updatedStore.setPlayerHpSp(this.playerEntity.currentHp, this.playerEntity.currentSp);
+      this.playerEntity.currentHp = updatedStats.maxHp;
+      this.playerEntity.currentSp = updatedStats.maxSp;
+      store.setPlayerHpSp(this.playerEntity.currentHp, this.playerEntity.currentSp);
     } else {
       store.addCombatLog(`Matas a [${mob.name}]. +${expBase} EXP base, +${expJob} EXP job.`, 'system');
     }
 
-    store.addCombatLog(`[Loot Drop] Cayó una caja de item de [${mob.name}].`, 'loot');
+    // Drop items based on monster type
+    const drops = this.getDropsForMob(mob);
+    drops.forEach(drop => {
+      inventory.addItem(drop.itemId, drop.quantity);
+      store.addCombatLog(`[Loot] Obtuviste ${drop.name} x${drop.quantity}.`, 'loot');
+    });
+
+    // Drop Zeny
+    const zenyDrop = mob.type === 'boss_mvp' ? 5000 : (mob.mobType === 'poring' ? 10 : mob.mobType === 'poporing' ? 25 : 100);
+    store.addExp(0, 0); // Trigger store update
+    // Note: Zeny is handled by the inventory system directly
+  }
+
+  private getDropsForMob(mob: Entity): { itemId: string; name: string; quantity: number }[] {
+    const drops: { itemId: string; name: string; quantity: number }[] = [];
+    
+    if (mob.type === 'boss_mvp') {
+      drops.push({ itemId: 'mvp_coin', name: 'MVP Coin', quantity: 1 });
+      drops.push({ itemId: 'ragnarok_crown', name: 'Ragnarok Crown', quantity: 1 });
+    } else if (mob.mobType === 'poring') {
+      if (Math.random() < 0.5) drops.push({ itemId: 'jellopy', name: 'Jellopy', quantity: 1 });
+      if (Math.random() < 0.3) drops.push({ itemId: 'red_potion', name: 'Red Potion', quantity: 1 });
+    } else if (mob.mobType === 'poporing') {
+      if (Math.random() < 0.4) drops.push({ itemId: 'jellopy', name: 'Jellopy', quantity: 1 });
+      if (Math.random() < 0.3) drops.push({ itemId: 'sticky_mucus', name: 'Sticky Mucus', quantity: 1 });
+      if (Math.random() < 0.2) drops.push({ itemId: 'red_potion', name: 'Red Potion', quantity: 1 });
+    } else if (mob.mobType === 'pecopeco') {
+      if (Math.random() < 0.3) drops.push({ itemId: 'empty_bottle', name: 'Empty Bottle', quantity: 1 });
+      if (Math.random() < 0.2) drops.push({ itemId: 'orange_potion', name: 'Orange Potion', quantity: 1 });
+    }
+
+    return drops;
   }
 
   tickProjectiles(dt: number) {

@@ -169,7 +169,11 @@ export class RagnarokEngine implements EntityLookup {
     this.worldRuntime.init(this.playerEntity, this.monsters, this.npcs);
 
     // Init Combat System
-    this.combatSystem = new CombatSystem(this.playerEntity, this.monsters);
+    this.combatSystem = new CombatSystem({
+      playerEntity: this.playerEntity,
+      monsters: this.monsters,
+      context: this.context
+    });
     this.combatSystem.setCallbacks({
       onFloatingText: (text, color, scale, x, y, z) => this.effectsSystem.spawnFloatingText(text, color, scale, x, y, z),
       onEffectSpawn: (type, x, z) => this.effectsSystem.spawnEffect(type, x, z),
