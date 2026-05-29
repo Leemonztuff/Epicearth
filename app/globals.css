@@ -1,0 +1,33 @@
+@import "tailwindcss";
+
+/* Custom utility styles for smooth canvas interactions */
+body {
+  margin: 0;
+  padding: 0;
+  overflow: hidden;
+  background-color: #0b0f19;
+  -webkit-touch-callout: none; /* prevent callout to copy image, etc on touch */
+  -webkit-user-select: none; /* prevent selection */
+  user-select: none;
+}
+
+canvas {
+  outline: none;
+  -webkit-tap-highlight-color: transparent; /* prevent tap highlight box on mobile */
+}
+
+/* Scrollbar styling */
+::-webkit-scrollbar {
+  width: 5px;
+  height: 5px;
+}
+::-webkit-scrollbar-track {
+  background: #0f172a;
+}
+::-webkit-scrollbar-thumb {
+  background: #334155;
+  border-radius: 4px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #475569;
+}

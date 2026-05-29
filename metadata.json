@@ -1,0 +1,6 @@
+{
+  "name": "Ragnarok Input Engine",
+  "description": "Realtime Ragnarok Online-inspired RPG engine with advanced mobile multitouch input controls.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
