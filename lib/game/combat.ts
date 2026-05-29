@@ -32,8 +32,6 @@ export class CombatSystem {
     targetEntityId: string | null;
     color: string;
   } | null = null;
-  private battleModeEndTime = 0;
-
   private onFloatingText: (text: string, color: string, scale: number, x: number, y: number, z: number) => void = () => {};
   private onEffectSpawn: (type: string, x: number, z: number) => void = () => {};
   private onProjectileSpawn: (type: Projectile['type'], owner: Entity, target: Entity, damage: number, isCrit: boolean) => void = () => {};
@@ -61,7 +59,6 @@ export class CombatSystem {
   }
 
   getActiveCast() { return this.activeCast; }
-  getBattleModeEndTime() { return this.battleModeEndTime; }
 
   tickRuntime(dt: number, now: number): void {
     this.runtime.tickStatuses(dt, now);
@@ -201,7 +198,6 @@ export class CombatSystem {
         this.playerEntity.state = 'attack';
         this.playerEntity.animationTimer = 0;
         this.playerEntity.hitRecoveryEndTime = now + 300;
-        this.triggerBattleMode(now);
 
         const dmgCalc: DamageCalculation = {
           attackerAtk: stats.atk,
@@ -274,7 +270,6 @@ export class CombatSystem {
     const stats = store.getStats();
     this.playerEntity.state = 'attack';
     this.playerEntity.hitRecoveryEndTime = now + 400;
-    this.triggerBattleMode(now);
 
     gameAudio.playSkillCast();
     this.onEffectSpawn(skillId, tx, tz);
@@ -360,10 +355,6 @@ export class CombatSystem {
     if (target.currentHp <= 0 && target.type !== 'player') {
       this.reapMonsterRewards(target);
     }
-  }
-
-  triggerBattleMode(now: number) {
-    this.battleModeEndTime = now + 5000;
   }
 
   reapMonsterRewards(mob: Entity) {

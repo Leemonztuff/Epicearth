@@ -40,25 +40,46 @@ export class MonsterAI {
     }
 
     const tickScale = dt * 60.0;
+    const aggroTable = this.runtime.getAggroTable();
 
     this.monsters.forEach(mob => {
       if (mob.currentHp <= 0) return;
 
-      const dist = Math.sqrt(
-        (this.playerEntity.x - mob.x) ** 2 + (this.playerEntity.z - mob.z) ** 2
-      );
+      // Check aggro table first — if monster has been attacked, override target
+      const topThreat = aggroTable.getTopThreat(mob.id);
+      const hasAggro = topThreat !== null && topThreat.threat > 0;
+
+      // Find the target entity: aggro target or player
+      let targetEntity: Entity | null = null;
+      if (hasAggro && topThreat) {
+        const found = this.monsters.find(m => m.id === topThreat.targetId)
+          || (topThreat.targetId === this.playerEntity.id ? this.playerEntity : null);
+        if (found && found.currentHp > 0) {
+          targetEntity = found;
+          mob.targetEntityId = found.id;
+        }
+      }
+
+      const dist = targetEntity
+        ? Math.sqrt((targetEntity.x - mob.x) ** 2 + (targetEntity.z - mob.z) ** 2)
+        : Math.sqrt((this.playerEntity.x - mob.x) ** 2 + (this.playerEntity.z - mob.z) ** 2);
 
       const visionLimit = mob.type === 'boss_mvp' ? 16.0 : 6.0;
       const isAggressive = mob.type === 'boss_mvp' || mob.mobType === 'pecopeco';
+      const isInRange = dist <= visionLimit;
 
-      if (dist <= visionLimit && (isAggressive || mob.targetEntityId)) {
-        mob.targetEntityId = 'player_main';
+      if (hasAggro || (isInRange && (isAggressive || mob.targetEntityId))) {
+        if (!targetEntity) {
+          targetEntity = this.playerEntity;
+          mob.targetEntityId = 'player_main';
+        }
+
         const combatReach = mob.type === 'boss_mvp' ? 2.8 : 1.8;
 
         if (dist <= combatReach) {
           this.monsterAttack(mob, now);
         } else {
-          this.monsterChase(mob, dist, tickScale);
+          this.monsterChaseTarget(mob, dist, tickScale, targetEntity);
         }
       } else {
         this.monsterWander(mob, tickScale);
@@ -106,15 +127,15 @@ export class MonsterAI {
 
   // --- MONSTER CHASE ---
 
-  private monsterChase(mob: Entity, dist: number, tickScale: number): void {
+  private monsterChaseTarget(mob: Entity, dist: number, tickScale: number, target: Entity): void {
     if (mob.state !== 'attack' && mob.hitRecoveryEndTime < performance.now()) {
       mob.state = 'move';
     }
     const mSpeed = (mob.type === 'boss_mvp' ? 0.075 : 0.032) * tickScale;
-    mob.facing = this.playerEntity.x > mob.x ? 'right' : 'left';
+    mob.facing = target.x > mob.x ? 'right' : 'left';
 
-    const dx = this.playerEntity.x - mob.x;
-    const dz = this.playerEntity.z - mob.z;
+    const dx = target.x - mob.x;
+    const dz = target.z - mob.z;
     mob.x += (dx / dist) * mSpeed;
     mob.z += (dz / dist) * mSpeed;
     mob.y = 0;

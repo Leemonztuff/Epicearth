@@ -151,6 +151,17 @@ export class RagnarokEngine implements EntityLookup {
     gameEventBus.on('entity:died', (event) => {
       this.context.store.addCombatLog(`[Event] ${event.entityId} ha sido eliminado por ${event.killerId || 'desconocido'}.`, 'system');
     });
+
+    gameEventBus.on('combat:miss', (event) => {
+      this.context.store.addCombatLog(`${event.attackerId} falló contra ${event.targetId}${event.reason ? ` (${event.reason})` : ''}.`, 'system');
+      if (event.targetId === this.playerEntity.id) {
+        this.rendererBridge.spawnFloatingText('EVADED', '#94a3b8', 1.2, this.playerEntity.x, 2.5, this.playerEntity.z);
+      }
+    });
+
+    gameEventBus.on('combat:death', (event) => {
+      this.context.store.addCombatLog(`[Combat Death] ${event.entityId} eliminado por ${event.killerId || 'desconocido'} en t=${event.timestamp}.`, 'system');
+    });
   }
 
   // --- 3. WORLD SETUP ---
@@ -311,9 +322,6 @@ export class RagnarokEngine implements EntityLookup {
     // 5. Animation timers
     this.playerEntity.animationTimer += dt;
     this.monsters.forEach(m => { m.animationTimer += dt; });
-
-    // 6. Sync store
-    store.setPlayerHpSp(this.playerEntity.currentHp, this.playerEntity.currentSp);
   }
 
   // --- 6. RENDER TICK ---
