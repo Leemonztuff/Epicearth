@@ -3,14 +3,14 @@
 ## Stack
 - Next.js 15, React 19, Three.js, Zustand, TypeScript, Tailwind CSS v4
 - lucide-react 1.17.0 (iconos)
-- motion 11.15.0 (animaciones)
+- motion 11.18.0 (animaciones)
 
 ## Estado Actual (2026-05-29)
-- Sandbox realtime de Ragnarok Online con combate, NPCs, habilidades
+- Sandbox realtime de Ragnarok Online con combate, NPCs, habilidades, inventario y equipo
 - Deployed en Vercel: https://epicearth.vercel.app
 - Repo: https://github.com/Leemonztuff/Epicearth
 
-## Arquitectura Refactorizada (Fase 1-4 completada)
+## Arquitectura Refactorizada (Fase 1-5 completada)
 
 ### Estructura
 ```
@@ -32,6 +32,7 @@ lib/game/
 │   └── ItemDatabase.ts      # Base de datos de items
 ├── server/
 │   └── MonsterAI.ts         # AI de monstruos
+│   └── CombatRuntime.ts     # Motor de combate determinístico
 ├── client/
 │   ├── PlayerController.ts  # Movimiento/input
 │   ├── RendererBridge.ts    # Separación rendering↔lógica
@@ -45,12 +46,12 @@ lib/game/
 ├── effects.ts               # Efectos visuales
 ├── audio.ts                 # Sistema de audio
 ├── spawner.ts               # Spawner de entidades
-└── types.ts                 # Tipos TypeScript
+└── types.ts                 # Tipos TypeScript (247 líneas)
 
 app/
 ├── components/
-│   └── InventoryPanel.tsx   # UI de inventario y equipo
-├── page.tsx                 # Página principal
+│   └── InventoryPanel.tsx   # UI de inventario y equipo (~350 líneas)
+├── page.tsx                 # Página principal (~760 líneas)
 ├── layout.tsx               # Layout raíz
 └── globals.css              # Estilos
 ```
@@ -60,46 +61,59 @@ app/
 | Sistema | Archivo | Estado |
 |---------|---------|--------|
 | MonsterAI | `server/MonsterAI.ts` | ✅ Integrado |
+| CombatRuntime | `server/CombatRuntime.ts` | ✅ Integrado (aggro, pipelines) |
 | RegenSystem | `shared/RegenSystem.ts` | ✅ Integrado |
 | ProjectileSystem | `shared/ProjectileSystem.ts` | ✅ Integrado |
 | CooldownSystem | `shared/CooldownSystem.ts` | ✅ Integrado |
 | BuffSystem | `shared/BuffSystem.ts` | ✅ Integrado |
 | LootSystem | `shared/LootSystem.ts` | ✅ Integrado |
 | PlayerController | `client/PlayerController.ts` | ✅ Integrado |
-| InventorySystem | `shared/InventorySystem.ts` | ✅ Integrado con UI |
-| EquipmentSystem | `shared/EquipmentSystem.ts` | ✅ Integrado con UI |
+| InventorySystem | `shared/InventorySystem.ts` | ✅ Sincronizado con equipo |
+| EquipmentSystem | `shared/EquipmentSystem.ts` | ✅ Sincronizado con inventario |
 | ItemDatabase | `shared/ItemDatabase.ts` | ✅ 30+ items |
 
-### Dependency Injection
+### Inversión de Dependencias
 - GameContext con GameStoreAPI (interfaz)
 - createGameContext() (factory function)
 - Todos los sistemas reciben GameContext via constructor
-- Eliminado acoplamiento directo con useGameStore
+- Sin acoplamiento directo a useGameStore
 
 ### UI Implementada
-- Botón de inventario en HUD (Package icon)
-- Panel de inventario slide-in con tabs
+- Botón de inventario en HUD (Package icon) + tecla `I`
+- Panel de inventario slide-in con tabs (Inventario / Equipo)
 - Botón de pociones conectado al inventario
-- Contador real de pociones
-- Drops de monstruos van al inventario
+- Contador real de pociones en HUD
+- Drops de monstruos van al inventario (loot en suelo + pickup)
+- Barra de peso con advertencia al >80%
+- Bonos combinados del equipo visibles en pestaña Equipo
+- Confirmación al remover equipo (evita clacs accidentales)
+- Stats de equipo visibles al seleccionar item en inventario
+- Indicador de amenaza (aggro) en la barra de target del enemigo
 
 ### Sistema de Inventario (RO Style)
 - 30 slots máximo
 - Peso máximo: 2000 unidades (200kg)
 - Items stackables y no stackables
-- Sistema de Zeny (moneda)
-- 30+ items definidos
+- Zeny reactivo vía Zustand (sincronizado automáticamente)
+- 30+ items definidos en ItemDatabase
 
 ### Sistema de Equipo
 - 8 slots: head, body, weapon, shield, shoes, garment, accessory1, accessory2
 - Restricciones de nivel y clase
-- Bonuses de stats por equipo
-- Bonuses por refinamiento (+1 a +10)
+- Bonuses de stats por item + refinamiento (+1 a +10)
+- Bonos combinados calculados en vivo
+- Sincronizado bidireccionalmente con inventario (equipar ↔ desequipar)
+
+### Aggro / Threat
+- Sistema de tabla de aggro en CombatRuntime
+- Eventos `combat:aggro` y `combat:aggro_lost` via EventBus
+- Indicador visual en la UI del target (🔥 Aggro: TÚ / nombre)
+- Monstruos cambian de target basado en threat
 
 ## Pendiente
-- Tests unitarios para sistemas
+- Tests unitarios para sistemas (setup necesario)
 - Serialization layer para networking
 - Event-driven mutations (reemplazar mutaciones directas)
 - Client prediction para networking
-- Más items y equipo
-- UI de equipo mejorada
+- Más items, equipo, y monstruos
+- Mapa más grande con zonas

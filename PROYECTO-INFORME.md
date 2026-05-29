@@ -124,15 +124,19 @@ Un sandbox en tiempo real de **Ragnarok Online** hecho con **Next.js 15 + Three.
 - 30 slots máximo
 - Peso máximo: 2000 unidades (200kg)
 - Items stackables y no stackables
-- Sistema de Zeny (moneda)
+- Zeny sincronizado reactivamente vía Zustand
+- Método público `getItemDefinitionsMap()` (sin acceso privado)
 - Sort por tipo
+- ✅ Sincronizado bidireccionalmente con equipo
 
 ### 8. Sistema de Equipo (`EquipmentSystem.ts`)
 - 8 slots: head, body, weapon, shield, shoes, garment, accessory1, accessory2
 - Restricciones de nivel y clase
-- Bonuses de stats por equipo
+- Bonuses de stats por equipo + cálculo combinado en vivo
 - Bonuses por refinamiento (+1 a +10)
 - Slots para cartas (preparado para futuro)
+- `calculateStatBonuses()` público para UI
+- ✅ Sincronizado bidireccionalmente con inventario
 
 ### 9. Base de Datos de Items (`ItemDatabase.ts`)
 - 30+ items definidos
@@ -150,6 +154,7 @@ Un sandbox en tiempo real de **Ragnarok Online** hecho con **Next.js 15 + Three.
 | Sistema | Archivo | Responsabilidad |
 |---------|---------|-----------------|
 | MonsterAI | `server/MonsterAI.ts` | AI de monstruos |
+| CombatRuntime | `server/CombatRuntime.ts` | Motor determinístico con aggro, daño, status effects |
 | RegenSystem | `shared/RegenSystem.ts` | Regeneración HP/SP |
 | ProjectileSystem | `shared/ProjectileSystem.ts` | Física de proyectiles |
 | CooldownSystem | `shared/CooldownSystem.ts` | Battle mode, timers |
@@ -187,11 +192,23 @@ Un sandbox en tiempo real de **Ragnarok Online** hecho con **Next.js 15 + Three.
 - Panel de stats (HP/SP/Level)
 - Barras de EXP (Base + Job)
 - Hotbar de habilidades con cooldown visual circular
-- Inventario de pociones
+- Botón de pociones con contador real
+- Indicador de amenaza (🔥 Aggro) en barra de target del enemigo
 - Panel de configuración (joystick toggle, clase, headgear)
 - Log de combate en tiempo real
 - Modal de resurrección al morir
 - Diálogos NPC estilo Ragnarok
+
+### Panel de Inventario y Equipo
+- Slide-in lateral con tabs (Inventario / Equipo)
+- Tecla `I` para abrir/cerrar
+- Stats: slots usados, peso, zeny reactivo
+- Barra de peso animada con advertencia al >80%
+- Grid 5-col de items con colores por tipo
+- Detalle de item al seleccionar (peso, precio, stats para equipo)
+- Botón USAR para consumibles / EQUIPAR para equipo
+- Bonos combinados del equipo visibles en pestaña Equipo
+- Confirmación al remover equipo (evita clacs accidentales)
 
 ---
 
@@ -244,4 +261,4 @@ Un sandbox en tiempo real de **Ragnarok Online** hecho con **Next.js 15 + Three.
 
 ---
 
-*Informe generado el 2026-05-29 - Actualizado con sistemas de inventario y equipo*
+*Informe generado el 2026-05-29 - Actualizado con sincronización inventario↔equipo, aggro UI, zeny reactivo*

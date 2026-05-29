@@ -94,10 +94,12 @@ export default function GamePage() {
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, []);
 
-  // Compute fresh equipment bonuses each time inventory opens
+  // Sync equipment bonuses to store and UI each time inventory opens
   useEffect(() => {
     if (isInventoryOpen) {
-      setEquipmentBonuses(gameContext.equipment.calculateStatBonuses());
+      const bonuses = gameContext.equipment.calculateStatBonuses();
+      setEquipmentBonuses(bonuses);
+      store.updateStats(bonuses);
     }
   }, [isInventoryOpen]);
 
@@ -745,10 +747,32 @@ export default function GamePage() {
           }
         }}
         onEquipItem={(itemId) => {
-          gameContext.equipment.equip(itemId, store.stats.level, store.jobClass);
+          const itemDef = gameContext.inventory.getItemDefinition(itemId);
+          if (!itemDef?.equipmentSlot) return;
+          const slot = itemDef.equipmentSlot;
+          const oldItemId = gameContext.equipment.getState()[slot].itemDefId;
+
+          const success = gameContext.equipment.equip(itemId, store.stats.level, store.jobClass);
+          if (!success) return;
+
+          gameContext.inventory.removeItem(itemId, 1);
+          if (oldItemId && oldItemId !== itemId) {
+            gameContext.inventory.addItem(oldItemId, 1);
+          }
+          const newBonuses = gameContext.equipment.calculateStatBonuses();
+          setEquipmentBonuses(newBonuses);
+          store.updateStats(newBonuses);
         }}
         onUnequipItem={(slot) => {
+          const slotState = gameContext.equipment.getState()[slot];
+          if (!slotState.itemDefId) return;
+          const itemIdToReturn = slotState.itemDefId;
+
           gameContext.equipment.unequip(slot);
+          gameContext.inventory.addItem(itemIdToReturn, 1);
+          const newBonuses = gameContext.equipment.calculateStatBonuses();
+          setEquipmentBonuses(newBonuses);
+          store.updateStats(newBonuses);
         }}
       />
     </div>
