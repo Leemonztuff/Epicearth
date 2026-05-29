@@ -5,12 +5,15 @@ import { motion, AnimatePresence } from 'motion/react';
 import { 
   Flame, Shield, Swords, Sparkles, Heart, Zap, 
   Settings, RefreshCw, Eye, Info, Layers, 
-  AlertTriangle, Play, FastForward, FlaskConical, HelpCircle
+  AlertTriangle, Play, FastForward, FlaskConical, HelpCircle,
+  Package
 } from 'lucide-react';
 
 import { useGameStore } from '../lib/game/state';
 import { RagnarokEngine } from '../lib/game/engine';
 import { JobClass, HeadgearId } from '../lib/game/types';
+import { InventoryPanel } from './components/InventoryPanel';
+import { createGameContext } from '../lib/game/core/GameContext';
 
 export default function GamePage() {
   const containerRef = useRef<HTMLDivElement>(null);
@@ -22,6 +25,8 @@ export default function GamePage() {
   const [fps, setFps] = useState(60);
   const [currentTime, setCurrentTime] = useState(0);
   const [activeSettingsTab, setActiveSettingsTab] = useState<'controls' | 'report'>('controls');
+  const [isInventoryOpen, setIsInventoryOpen] = useState(false);
+  const [gameContext] = useState(() => createGameContext());
 
   // High-precision animation timer frame ticker (drives ultra-smooth radial cooldown covers)
   useEffect(() => {
@@ -272,7 +277,16 @@ export default function GamePage() {
       </div>
 
       {/* 4. CONFIGURATION ACCESS BUTTON (Top Right) */}
-      <div className="absolute top-4 right-4 z-10 pointer-events-none">
+      <div className="absolute top-4 right-4 z-10 pointer-events-none flex items-center space-x-2">
+        {/* Inventory Button */}
+        <button 
+          onClick={() => setIsInventoryOpen(true)}
+          className="bg-slate-900/90 hover:bg-slate-800 border border-slate-700/80 p-2.5 rounded-xl shadow-lg hover:shadow-cyan-500/10 pointer-events-auto hover:border-slate-500 text-slate-300 hover:text-white transition-all transform hover:scale-105 cursor-pointer"
+          title="Inventario"
+          id="inventory-btn"
+        >
+          <Package className="w-4 h-4 shrink-0" />
+        </button>
         {/* Setup and Config drawer trigger buttons */}
         <button 
           onClick={store.toggleConfigPanel}
@@ -392,10 +406,20 @@ export default function GamePage() {
         <div className="flex items-center space-x-2 pointer-events-auto">
           {/* Potion inventory count sticker */}
           <span className="font-mono text-[9px] bg-red-950 text-red-400 border border-red-500/30 font-extrabold px-1.5 py-0.5 rounded-full shrink-0">
-            x{store.potCount} Red Potion
+            x{gameContext.inventory.getItemCount('red_potion')} Red Potion
           </span>
           <button 
-            onClick={() => store.addToInputBuffer({ type: 'potion' })}
+            onClick={() => {
+              if (gameContext.inventory.hasItem('red_potion')) {
+                gameContext.inventory.removeItem('red_potion', 1);
+                const healAmount = 150;
+                const newHp = Math.min(store.stats.maxHp, store.currentHp + healAmount);
+                store.setPlayerHpSp(newHp, store.currentSp);
+                store.addCombatLog(`Usaste Red Potion: +${healAmount} HP`, 'heal');
+              } else {
+                store.addCombatLog('¡No tienes Red Potions!', 'system');
+              }
+            }}
             className="w-12 h-12 rounded-full bg-linear-to-b from-red-500 to-rose-700 hover:from-red-400 hover:to-rose-600 shadow-lg active:scale-95 transition-all text-white border border-white/20 flex items-center justify-center cursor-pointer"
             id="drink-pot-btn"
           >
@@ -660,6 +684,35 @@ export default function GamePage() {
           </motion.div>
         )}
       </AnimatePresence>
+
+      {/* 12. INVENTORY & EQUIPMENT PANEL */}
+      <InventoryPanel
+        isOpen={isInventoryOpen}
+        onClose={() => setIsInventoryOpen(false)}
+        inventorySlots={gameContext.inventory.getSlots()}
+        equipmentState={gameContext.equipment.getState() as any}
+        itemDefinitions={gameContext.inventory['itemDefinitions']}
+        onUseItem={(slotIndex) => {
+          const slot = gameContext.inventory.getSlots()[slotIndex];
+          if (slot) {
+            const itemDef = gameContext.inventory.getItemDefinition(slot.itemDefId);
+            if (itemDef?.type === 'consumable' && itemDef.healAmount) {
+              const currentHp = store.currentHp;
+              const maxHp = store.stats.maxHp;
+              const newHp = Math.min(maxHp, currentHp + itemDef.healAmount);
+              store.setPlayerHpSp(newHp, store.currentSp);
+              store.addCombatLog(`Usaste ${itemDef.name}: +${itemDef.healAmount} HP`, 'heal');
+              gameContext.inventory.removeItem(slot.itemDefId, 1);
+            }
+          }
+        }}
+        onEquipItem={(itemId) => {
+          gameContext.equipment.equip(itemId, store.stats.level, store.jobClass);
+        }}
+        onUnequipItem={(slot) => {
+          gameContext.equipment.unequip(slot);
+        }}
+      />
     </div>
   );
 }
