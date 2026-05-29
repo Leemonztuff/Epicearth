@@ -183,6 +183,10 @@ export class RagnarokEngine implements EntityLookup {
       onProjectileSpawn: (type, owner, target, damage, isCrit) => this.worldRuntime.spawnProjectile(type, owner, target, damage, isCrit),
       onScreenShake: (intensity) => { this.screenShakeIntensity = intensity; }
     });
+    // Wire projectile impact → CombatSystem for damage + effects
+    this.worldRuntime.setCallbacks({
+      onProjectileImpact: (proj, target) => this.combatSystem.impactProjectile(proj, target)
+    });
 
     // Re-initialize loot system with actual player entity
     this.context.loot = new (this.context.loot.constructor as any)({
@@ -372,8 +376,10 @@ export class RagnarokEngine implements EntityLookup {
       inventory.removeItem('red_potion', 1);
       const healAmount = 150;
       const newHp = Math.min(store.getStats().maxHp, store.getCurrentHp() + healAmount);
+      this.playerEntity.currentHp = newHp;
       store.setPlayerHpSp(newHp, store.getCurrentSp());
       store.addCombatLog(`Usaste Red Potion: +${healAmount} HP`, 'heal');
+      gameEventBus.emit('entity:healed', { entityId: this.playerEntity.id, amount: healAmount });
     } else {
       store.addCombatLog('¡No tienes Red Potions!', 'system');
     }

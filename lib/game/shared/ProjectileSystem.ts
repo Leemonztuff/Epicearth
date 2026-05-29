@@ -18,6 +18,9 @@ export class ProjectileSystem {
   private monsters: Entity[];
   private projectiles: Projectile[] = [];
 
+  /** Callback when a projectile impacts its target (wired to CombatSystem.impactProjectile) */
+  onImpact: ((proj: Projectile, target: Entity) => void) | null = null;
+
   constructor(config: ProjectileSystemConfig) {
     this.playerEntity = config.playerEntity;
     this.monsters = config.monsters;
@@ -55,13 +58,23 @@ export class ProjectileSystem {
       const pdist = Math.sqrt(pdx * pdx + pdy * pdy + pdz * pdz);
 
       if (pdist < speedScale * 1.25) {
-        // Impacto - emitir evento para que el combat system resuelva
-        gameEventBus.emit('entity:damaged', {
-          entityId: target.id,
-          damage: proj.damage,
-          isCrit: proj.isCrit,
-          sourceId: proj.ownerEntityId
-        });
+        if (this.onImpact) {
+          this.onImpact(proj, target);
+        } else {
+          // Fallback: apply damage directly
+          target.currentHp = Math.max(0, target.currentHp - proj.damage);
+          target.state = 'hit';
+          target.hitRecoveryEndTime = performance.now() + 180;
+          gameEventBus.emit('entity:damaged', {
+            entityId: target.id,
+            damage: proj.damage,
+            isCrit: proj.isCrit,
+            sourceId: proj.ownerEntityId
+          });
+          if (target.currentHp <= 0 && target.type !== 'player') {
+            gameEventBus.emit('entity:died', { entityId: target.id, killerId: proj.ownerEntityId });
+          }
+        }
         this.projectiles.splice(i, 1);
       } else {
         // Mover proyectil hacia el target

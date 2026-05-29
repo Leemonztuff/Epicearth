@@ -273,8 +273,14 @@ export class WorldRuntime {
     this.isRunning = true;
   }
 
-  setCallbacks(callbacks: { onAudioTrigger?: (action: string) => void }) {
+  setCallbacks(callbacks: {
+    onAudioTrigger?: (action: string) => void;
+    onProjectileImpact?: (proj: Projectile, target: Entity) => void;
+  }) {
     this.onAudioTrigger = callbacks.onAudioTrigger;
+    if (callbacks.onProjectileImpact && this.projectileSystem) {
+      this.projectileSystem.onImpact = callbacks.onProjectileImpact;
+    }
   }
 
   // --- EVENT SYSTEM ---
