@@ -1,6 +1,6 @@
 import { Entity } from '../types';
-import { useGameStore } from '../state';
 import { gameEventBus } from '../core/EventBus';
+import { GameContext } from '../core/GameContext';
 
 // ============================================================================
 // MONSTER AI - Sistema de inteligencia artificial para monstruos
@@ -12,15 +12,18 @@ import { gameEventBus } from '../core/EventBus';
 export interface MonsterAIConfig {
   playerEntity: Entity;
   monsters: Entity[];
+  context: GameContext;
 }
 
 export class MonsterAI {
   private playerEntity: Entity;
   private monsters: Entity[];
+  private context: GameContext;
 
   constructor(config: MonsterAIConfig) {
     this.playerEntity = config.playerEntity;
     this.monsters = config.monsters;
+    this.context = config.context;
   }
 
   // --- MAIN AI TICK ---
@@ -67,9 +70,10 @@ export class MonsterAI {
 
     if (mob.animationTimer > rechargeCooldown * 0.001) {
       mob.animationTimer = 0;
-      const store = useGameStore.getState();
+      const store = this.context.store;
+      const stats = store.getStats();
       const hitScore = 150 + (isBoss ? 120 : 15);
-      const fleeScore = store.stats.flee;
+      const fleeScore = stats.flee;
       const dodgePercent = Math.min(0.95, Math.max(0.05, (fleeScore - hitScore + 100) / 100));
       const playerEvaded = Math.random() < dodgePercent;
 
@@ -79,7 +83,7 @@ export class MonsterAI {
       } else {
         const strikeAtk = isBoss ? 280 : (mob.mobType === 'pecopeco' ? 45 : 18);
         const randVariation = Math.floor((Math.random() - 0.5) * strikeAtk * 0.1);
-        let rawDmg = strikeAtk + randVariation - (store.stats.def * 0.15);
+        let rawDmg = strikeAtk + randVariation - (stats.def * 0.15);
         let finalDmg = Math.floor(Math.max(1, rawDmg));
 
         this.playerEntity.currentHp = Math.max(0, this.playerEntity.currentHp - finalDmg);

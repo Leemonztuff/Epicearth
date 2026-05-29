@@ -1,9 +1,9 @@
 import { Entity, CharacterStats } from '../types';
-import { useGameStore } from '../state';
 import { CombatSystem } from '../combat';
 import { EffectsSystem } from '../effects';
 import { gameAudio } from '../audio';
 import { gameEventBus } from '../core/EventBus';
+import { GameContext } from '../core/GameContext';
 
 // ============================================================================
 // PLAYER CONTROLLER - Movimiento y input del jugador
@@ -16,26 +16,31 @@ export interface MovementCallbacks {
   onNpcInteract?: (npc: Entity) => void;
 }
 
+export interface PlayerControllerConfig {
+  playerEntity: Entity;
+  monsters: Entity[];
+  npcs: Entity[];
+  combatSystem: CombatSystem;
+  effectsSystem: EffectsSystem;
+  context: GameContext;
+}
+
 export class PlayerController {
   private playerEntity: Entity;
   private monsters: Entity[];
   private npcs: Entity[];
   private combatSystem: CombatSystem;
   private effectsSystem: EffectsSystem;
+  private context: GameContext;
   private callbacks: MovementCallbacks = {};
 
-  constructor(
-    playerEntity: Entity,
-    monsters: Entity[],
-    npcs: Entity[],
-    combatSystem: CombatSystem,
-    effectsSystem: EffectsSystem
-  ) {
-    this.playerEntity = playerEntity;
-    this.monsters = monsters;
-    this.npcs = npcs;
-    this.combatSystem = combatSystem;
-    this.effectsSystem = effectsSystem;
+  constructor(config: PlayerControllerConfig) {
+    this.playerEntity = config.playerEntity;
+    this.monsters = config.monsters;
+    this.npcs = config.npcs;
+    this.combatSystem = config.combatSystem;
+    this.effectsSystem = config.effectsSystem;
+    this.context = config.context;
   }
 
   setCallbacks(callbacks: MovementCallbacks): void {
@@ -60,8 +65,8 @@ export class PlayerController {
   }
 
   tickJoystickMovement(dt: number, tickScale: number): boolean {
-    const store = useGameStore.getState();
-    if (!store.isJoystickEnabled || !store.joystick.isActive) return false;
+    const store = this.context.store;
+    if (!store.isJoystickEnabled() || !store.getJoystickState().isActive) return false;
     if (this.playerEntity.state === 'death') return false;
 
     // Cancel active casting
@@ -73,9 +78,11 @@ export class PlayerController {
     this.playerEntity.targetZ = undefined;
     this.playerEntity.state = 'move';
 
-    const angle = store.joystick.angle;
-    const mag = store.joystick.distance / 60;
-    const speed = (0.13 + store.stats.agi * 0.0018) * mag * tickScale;
+    const joystick = store.getJoystickState();
+    const stats = store.getStats();
+    const angle = joystick.angle;
+    const mag = joystick.distance / 60;
+    const speed = (0.13 + stats.agi * 0.0018) * mag * tickScale;
 
     this.playerEntity.x += Math.cos(angle) * speed;
     this.playerEntity.z += Math.sin(angle) * speed;
@@ -86,7 +93,7 @@ export class PlayerController {
 
   tickTouchMovement(dt: number, tickScale: number): void {
     if (this.playerEntity.state === 'death') return;
-    const store = useGameStore.getState();
+    const store = this.context.store;
 
     if (this.playerEntity.targetX !== undefined && this.playerEntity.targetZ !== undefined) {
       const dx = this.playerEntity.targetX - this.playerEntity.x;
@@ -95,7 +102,8 @@ export class PlayerController {
 
       if (dist > 0.3) {
         this.playerEntity.facing = dx > 0 ? 'right' : 'left';
-        const walkSpeed = (0.13 + store.stats.agi * 0.0018) * tickScale;
+        const stats = store.getStats();
+        const walkSpeed = (0.13 + stats.agi * 0.0018) * tickScale;
         this.playerEntity.x += (dx / dist) * walkSpeed;
         this.playerEntity.z += (dz / dist) * walkSpeed;
         this.playerEntity.y = 0;
@@ -110,7 +118,7 @@ export class PlayerController {
   // --- TARGETING ---
 
   handleTarget(targetId: string): void {
-    const store = useGameStore.getState();
+    const store = this.context.store;
     const mob = this.monsters.find(m => m.id === targetId);
     if (mob && mob.currentHp > 0) {
       this.playerEntity.targetEntityId = mob.id;
@@ -150,7 +158,8 @@ export class PlayerController {
   // --- REVIVE ---
 
   revivePlayer(): void {
-    const store = useGameStore.getState();
+    const store = this.context.store;
+    const stats = store.getStats();
     this.playerEntity.state = 'idle';
     this.playerEntity.x = 0;
     this.playerEntity.z = 0;
@@ -158,8 +167,8 @@ export class PlayerController {
     this.playerEntity.targetX = undefined;
     this.playerEntity.targetZ = undefined;
     this.playerEntity.targetEntityId = null;
-    this.playerEntity.currentHp = store.stats.maxHp;
-    this.playerEntity.currentSp = store.stats.maxSp;
+    this.playerEntity.currentHp = stats.maxHp;
+    this.playerEntity.currentSp = stats.maxSp;
 
     store.setPlayerHpSp(this.playerEntity.currentHp, this.playerEntity.currentSp);
     store.setTarget(null);

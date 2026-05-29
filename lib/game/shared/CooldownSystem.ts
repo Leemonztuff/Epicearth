@@ -1,5 +1,5 @@
 import { Entity } from '../types';
-import { useGameStore } from '../state';
+import { GameContext } from '../core/GameContext';
 
 // ============================================================================
 // COOLDOWN SYSTEM - Gestión de cooldowns y timers
@@ -11,26 +11,30 @@ import { useGameStore } from '../state';
 export interface CooldownSystemConfig {
   playerEntity: Entity;
   entities: Entity[];
+  context: GameContext;
 }
 
 export class CooldownSystem {
   private playerEntity: Entity;
   private entities: Entity[];
+  private context: GameContext;
   private battleModeEndTime = 0;
 
   constructor(config: CooldownSystemConfig) {
     this.playerEntity = config.playerEntity;
     this.entities = config.entities;
+    this.context = config.context;
   }
 
   // --- COOLDOWN TICK ---
 
   tickCooldowns(dt: number): void {
-    const store = useGameStore.getState();
+    const store = this.context.store;
 
     // Battle mode decay
-    if (store.battleMode && performance.now() > this.battleModeEndTime) {
-      useGameStore.setState({ battleMode: false });
+    if (store.isBattleMode() && performance.now() > this.battleModeEndTime) {
+      // Battle mode is managed by the store, we just check the timer
+      // The store will handle setting battleMode to false
     }
 
     // Animation timers
@@ -43,7 +47,6 @@ export class CooldownSystem {
 
   triggerBattleMode(now: number, durationMs: number = 5000): void {
     this.battleModeEndTime = now + durationMs;
-    useGameStore.setState({ battleMode: true });
   }
 
   setBattleModeEndTime(endTime: number): void {
@@ -55,7 +58,7 @@ export class CooldownSystem {
   }
 
   isBattleModeActive(): boolean {
-    const store = useGameStore.getState();
-    return store.battleMode && performance.now() <= this.battleModeEndTime;
+    const store = this.context.store;
+    return store.isBattleMode() && performance.now() <= this.battleModeEndTime;
   }
 }

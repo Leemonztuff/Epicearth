@@ -1,5 +1,4 @@
 import * as THREE from 'three';
-import { useGameStore } from './state';
 import { GameRenderer } from './renderer';
 import { gameAudio } from './audio';
 import { WorldRuntime } from './worldRuntime';
@@ -10,6 +9,7 @@ import { EntitySpawner } from './spawner';
 import { EffectsSystem } from './effects';
 import { PlayerController } from './client/PlayerController';
 import { Entity, GroundItem, HeadgearId, Projectile } from './types';
+import { GameContext, createZustandGameStoreAPI } from './core/GameContext';
 
 // ============================================================================
 // RAGNAROK ENGINE - ORQUESTADOR PRINCIPAL
@@ -37,6 +37,9 @@ export class RagnarokEngine implements EntityLookup {
   private npcSystem!: NpcSystem;
   private effectsSystem!: EffectsSystem;
   private playerController!: PlayerController;
+
+  // Game Context
+  private context: GameContext;
 
   // Entities
   private playerEntity!: Entity;
@@ -73,6 +76,7 @@ export class RagnarokEngine implements EntityLookup {
 
   constructor(container: HTMLDivElement) {
     this.container = container;
+    this.context = { store: createZustandGameStoreAPI() };
     this.initThree();
     this.initSystems();
     this.initWorld();
@@ -137,7 +141,7 @@ export class RagnarokEngine implements EntityLookup {
       spawnTouchMesh: (data) => this.gameRenderer.spawnTouchIndicator(data)
     });
 
-    this.worldRuntime = new WorldRuntime();
+    this.worldRuntime = new WorldRuntime(this.context);
     this.worldRuntime.setCallbacks({
       onAudioTrigger: (action) => {
         if (action === 'item_bounce') gameAudio.playItemPickup();
@@ -149,15 +153,12 @@ export class RagnarokEngine implements EntityLookup {
   private initWorld() {
     this.gameRenderer.createGroundMap();
 
-    const store = useGameStore.getState();
-    this.playerEntity = EntitySpawner.createPlayer(store.jobClass);
+    const store = this.context.store;
+    this.playerEntity = EntitySpawner.createPlayer(store.getJobClass());
     this.monsters = EntitySpawner.spawnRoamers(12);
     this.npcs = EntitySpawner.spawnNpcs();
 
-    useGameStore.setState({
-      currentHp: this.playerEntity.currentHp,
-      currentSp: this.playerEntity.currentSp
-    });
+    store.setPlayerHpSp(this.playerEntity.currentHp, this.playerEntity.currentSp);
 
     // Spawn boss after initial setup
     const boss = EntitySpawner.createBoss();
@@ -177,9 +178,14 @@ export class RagnarokEngine implements EntityLookup {
     });
 
     // Init Player Controller (extracted from engine)
-    this.playerController = new PlayerController(
-      this.playerEntity, this.monsters, this.npcs, this.combatSystem, this.effectsSystem
-    );
+    this.playerController = new PlayerController({
+      playerEntity: this.playerEntity,
+      monsters: this.monsters,
+      npcs: this.npcs,
+      combatSystem: this.combatSystem,
+      effectsSystem: this.effectsSystem,
+      context: this.context
+    });
     this.playerController.setCallbacks({
       onNpcInteract: (npc) => this.handleNpcInteract(npc)
     });
@@ -188,7 +194,7 @@ export class RagnarokEngine implements EntityLookup {
     this.npcSystem = new NpcSystem(this.playerEntity, this.npcs);
     this.npcSystem.setCallbacks({
       onEffectSpawn: (type, x, z) => this.effectsSystem.spawnEffect(type, x, z),
-      onClassChange: (job) => this.gameRenderer.createEntityTexture(this.playerEntity, store.headgear)
+      onClassChange: (job) => this.gameRenderer.createEntityTexture(this.playerEntity, store.getHeadgear())
     });
 
     // Init Input Handler (pass engine as EntityLookup)
@@ -226,7 +232,7 @@ export class RagnarokEngine implements EntityLookup {
   }
 
   private fixedTick(now: number, dt: number) {
-    const store = useGameStore.getState();
+    const store = this.context.store;
     const tickScale = dt * 60;
 
     // 1. Combat systems (casting, auto-attack)
@@ -294,8 +300,8 @@ export class RagnarokEngine implements EntityLookup {
 
   // --- 7. BILLBOARD RENDERING ---
   private updateBillboards() {
-    const store = useGameStore.getState();
-    this.updateSingleEntityBillboard(this.playerEntity, store.headgear);
+    const store = this.context.store;
+    this.updateSingleEntityBillboard(this.playerEntity, store.getHeadgear());
     this.monsters.forEach(m => this.updateSingleEntityBillboard(m, 'none'));
     this.npcs.forEach(n => this.updateSingleEntityBillboard(n, 'none'));
 
@@ -372,7 +378,7 @@ export class RagnarokEngine implements EntityLookup {
 
   // --- 8. NPC INTERACTION ---
   private handleNpcInteract(npc: Entity) {
-    const store = useGameStore.getState();
+    const store = this.context.store;
     const dialogue = this.npcSystem.openDialogue(npc);
     if (dialogue) {
       store.setNpcDialogue(dialogue);
@@ -395,6 +401,10 @@ export class RagnarokEngine implements EntityLookup {
   }
 
   drinkPotion() {
+    // Note: drinkPotion is a direct action on the store
+    // For now, we'll keep this as a special case since it's a UI action
+    // that directly modifies inventory state
+    const { useGameStore } = require('./state');
     useGameStore.getState().drinkPotion();
   }
 

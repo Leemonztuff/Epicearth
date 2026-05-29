@@ -3,3 +3,5 @@ export { CommandQueue } from './GameCommand';
 export { EventBus, gameEventBus } from './EventBus';
 export type { GameEvents, EventHandler, EventMap } from './EventBus';
 export type { StateProvider, EntityState, PlayerState, StateChangeEvent, StateChangeHandler } from './StateProvider';
+export type { GameContext, GameStoreAPI } from './GameContext';
+export { createZustandGameStoreAPI } from './GameContext';

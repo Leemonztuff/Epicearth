@@ -1,5 +1,4 @@
 import { Entity, Projectile, GroundItem, JobClass, Skill } from './types';
-import { useGameStore } from './state';
 import { gameAudio } from './audio';
 import { MonsterAI } from './server/MonsterAI';
 import { RegenSystem } from './shared/RegenSystem';
@@ -8,6 +7,7 @@ import { CooldownSystem } from './shared/CooldownSystem';
 import { BuffSystem } from './shared/BuffSystem';
 import { LootSystem } from './shared/LootSystem';
 import { gameEventBus } from './core/EventBus';
+import { GameContext } from './core/GameContext';
 
 // ============================================================================
 // WORLD RUNTIME - MOTOR DE SIMULACIÓN REALTIME
@@ -233,10 +233,15 @@ export class WorldRuntime {
   private npcs: Entity[] = [];
   private groundItems: GroundItem[] = [];
 
+  // Game context for dependency injection
+  private context: GameContext;
+
   // Callbacks para efectos de audio/visual
   private onAudioTrigger?: (action: string) => void;
 
-  constructor() {}
+  constructor(context: GameContext) {
+    this.context = context;
+  }
 
   // --- INICIALIZACIÓN ---
   init(playerEntity: Entity, monsters: Entity[], npcs: Entity[]) {
@@ -244,16 +249,17 @@ export class WorldRuntime {
     this.monsters = monsters;
     this.npcs = npcs;
 
-    // Initialize sub-systems
-    this.monsterAI = new MonsterAI({ playerEntity, monsters });
-    this.regenSystem = new RegenSystem({ playerEntity });
+    // Initialize sub-systems with context
+    this.monsterAI = new MonsterAI({ playerEntity, monsters, context: this.context });
+    this.regenSystem = new RegenSystem({ playerEntity, context: this.context });
     this.projectileSystem = new ProjectileSystem({ playerEntity, monsters });
     this.cooldownSystem = new CooldownSystem({
       playerEntity,
-      entities: [playerEntity, ...monsters, ...npcs]
+      entities: [playerEntity, ...monsters, ...npcs],
+      context: this.context
     });
-    this.buffSystem = new BuffSystem({ playerEntity });
-    this.lootSystem = new LootSystem({ playerEntity, groundItems: this.groundItems });
+    this.buffSystem = new BuffSystem({ playerEntity, context: this.context });
+    this.lootSystem = new LootSystem({ playerEntity, groundItems: this.groundItems, context: this.context });
 
     // Registrar todas las entidades iniciales
     this.entityManager.add(playerEntity);

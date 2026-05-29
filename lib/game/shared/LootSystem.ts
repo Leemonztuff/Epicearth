@@ -1,7 +1,6 @@
 import { Entity, GroundItem } from '../types';
-import { useGameStore } from '../state';
 import { gameEventBus } from '../core/EventBus';
-import { gameAudio } from '../audio';
+import { GameContext } from '../core/GameContext';
 
 // ============================================================================
 // LOOT SYSTEM - Gestión de items en el suelo y recogida
@@ -13,15 +12,18 @@ import { gameAudio } from '../audio';
 export interface LootSystemConfig {
   playerEntity: Entity;
   groundItems: GroundItem[];
+  context: GameContext;
 }
 
 export class LootSystem {
   private playerEntity: Entity;
   private groundItems: GroundItem[];
+  private context: GameContext;
 
   constructor(config: LootSystemConfig) {
     this.playerEntity = config.playerEntity;
     this.groundItems = config.groundItems;
+    this.context = config.context;
   }
 
   // --- LOOT PHYSICS ---
@@ -58,7 +60,7 @@ export class LootSystem {
   // --- LOOT PICKUP ---
 
   tickLootPickup(): void {
-    const store = useGameStore.getState();
+    const store = this.context.store;
 
     for (let i = this.groundItems.length - 1; i >= 0; i--) {
       const item = this.groundItems[i];
