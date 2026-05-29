@@ -1,5 +1,92 @@
 export type JobClass = 'Lord Knight' | 'High Priest' | 'Assassin Cross' | 'Sniper';
 
+// ============================================================================
+// ITEM TYPES
+// ============================================================================
+
+export type ItemType = 'consumable' | 'equipment' | 'material' | 'card' | 'arrow' | 'etc';
+
+export type EquipmentSlot = 'head' | 'body' | 'weapon' | 'shield' | 'shoes' | 'garment' | 'accessory1' | 'accessory2';
+
+export type WeaponType = 'sword' | 'katar' | 'bow' | 'mace' | 'dagger' | 'staff';
+
+export type ArmorType = 'helmet' | 'armor' | 'shield' | 'shoes' | 'garment' | 'accessory';
+
+// ============================================================================
+// ITEM DEFINITIONS
+// ============================================================================
+
+export interface ItemDefinition {
+  id: string;
+  name: string;
+  type: ItemType;
+  description: string;
+  weight: number; // in units (1/10 kg)
+  sellPrice: number;
+  buyPrice: number;
+  stackable: boolean;
+  maxStack: number;
+
+  // Equipment-specific
+  equipmentSlot?: EquipmentSlot;
+  weaponType?: WeaponType;
+  armorType?: ArmorType;
+  requiredLevel?: number;
+  requiredJob?: JobClass[];
+  statBonuses?: Partial<CharacterStats>;
+  element?: 'fire' | 'water' | 'earth' | 'wind' | 'neutral';
+  refinement?: number; // +0 to +10
+
+  // Consumable-specific
+  healAmount?: number;
+  healType?: 'hp' | 'sp' | 'both';
+  buffId?: string;
+  buffDuration?: number;
+}
+
+// ============================================================================
+// INVENTORY SYSTEM
+// ============================================================================
+
+export interface InventorySlot {
+  itemDefId: string;
+  quantity: number;
+  refinement?: number;
+}
+
+export interface InventoryState {
+  slots: (InventorySlot | null)[];
+  maxSlots: number;
+  currentWeight: number;
+  maxWeight: number;
+  zeny: number; // currency
+}
+
+// ============================================================================
+// EQUIPMENT SYSTEM
+// ============================================================================
+
+export interface EquipmentSlotState {
+  itemDefId: string | null;
+  refinement: number;
+  cards: string[]; // card IDs inserted
+}
+
+export interface EquipmentState {
+  head: EquipmentSlotState;
+  body: EquipmentSlotState;
+  weapon: EquipmentSlotState;
+  shield: EquipmentSlotState;
+  shoes: EquipmentSlotState;
+  garment: EquipmentSlotState;
+  accessory1: EquipmentSlotState;
+  accessory2: EquipmentSlotState;
+}
+
+// ============================================================================
+// CHARACTER STATS (expanded)
+// ============================================================================
+
 export interface CharacterStats {
   level: number;
   jobLevel: number;
@@ -16,6 +103,16 @@ export interface CharacterStats {
   aspd: number;
   maxHp: number;
   maxSp: number;
+
+  // Equipment bonuses (calculated)
+  bonusAtk: number;
+  bonusDef: number;
+  bonusHit: number;
+  bonusFlee: number;
+  bonusAspd: number;
+  bonusMaxHp: number;
+  bonusMaxSp: number;
+  bonusCrit: number;
 }
 
 export interface Buff {

@@ -1,7 +1,7 @@
 # INFORME DEL PROYECTO: Epicearth (Ragnarok Engine)
 
 ## Descripción General
-Un sandbox en tiempo real de **Ragnarok Online** hecho con **Next.js 15 + Three.js + React 19**. Motor de juego mobile/touch con combate, NPCs, habilidades y sistema de input multitouch.
+Un sandbox en tiempo real de **Ragnarok Online** hecho con **Next.js 15 + Three.js + React 19**. Motor de juego mobile/touch con combate, NPCs, habilidades, sistema de inventario/equipo y arquitectura modular preparada para networking.
 
 ---
 
@@ -15,7 +15,7 @@ Un sandbox en tiempo real de **Ragnarok Online** hecho con **Next.js 15 + Three.
 | Estado | Zustand | 4.5 |
 | Animaciones | Framer Motion (motion) | 11.15 |
 | Estilos | Tailwind CSS | 4.1 |
-| Iconos | Lucide React | 0.395 |
+| Iconos | Lucide React | 1.17.0 |
 | TypeScript | TypeScript | 5.3 |
 
 ---
@@ -31,24 +31,51 @@ Un sandbox en tiempo real de **Ragnarok Online** hecho con **Next.js 15 + Three.
 │   └── not-found.tsx       # Página 404
 ├── lib/
 │   └── game/
-│       ├── engine.ts       # Motor principal (RagnarokEngine) - 498 líneas
-│       ├── state.ts        # Store Zustand (game state) - 419 líneas
-│       ├── types.ts        # Tipos TypeScript - 150 líneas
-│       ├── renderer.ts     # Renderizador Three.js - ~700 líneas
-│       ├── combat.ts       # Sistema de combate - ~396 líneas
-│       ├── input.ts        # Handler de input (touch/joystick)
-│       ├── audio.ts        # Sistema de audio
-│       ├── effects.ts      # Efectos visuales
-│       ├── npc.ts          # Sistema de NPCs
-│       ├── spawner.ts      # Spawner de entidades
-│       ├── worldRuntime.ts # Runtime del mundo
-│       └── animationStateMachine.ts # Máquina de animaciones
+│       ├── core/                    # Framework agnóstico
+│       │   ├── GameCommand.ts       # Command pattern para networking
+│       │   ├── EventBus.ts          # Event system tipado
+│       │   ├── StateProvider.ts     # Abstracción de state
+│       │   ├── GameContext.ts       # Dependency injection
+│       │   └── index.ts
+│       ├── shared/                  # Shared entre client/server
+│       │   ├── BuffSystem.ts        # Gestión de buffs
+│       │   ├── LootSystem.ts        # Física y pickup de loot
+│       │   ├── RegenSystem.ts       # Regeneración HP/SP
+│       │   ├── ProjectileSystem.ts  # Física de proyectiles
+│       │   ├── CooldownSystem.ts    # Battle mode, timers
+│       │   ├── InventorySystem.ts   # Sistema de inventario
+│       │   ├── EquipmentSystem.ts   # Sistema de equipo
+│       │   └── ItemDatabase.ts      # Base de datos de items
+│       ├── server/
+│       │   └── MonsterAI.ts         # AI de monstruos
+│       ├── client/
+│       │   ├── PlayerController.ts  # Movimiento/input
+│       │   ├── RendererBridge.ts    # Separación rendering↔lógica
+│       │   └── LocalStateProvider.ts # Implementación local
+│       ├── engine.ts                # Orquestador principal
+│       ├── worldRuntime.ts          # Delega a 6 sistemas
+│       ├── combat.ts                # Sistema de combate
+│       ├── input.ts                 # Touch/joystick input
+│       ├── npc.ts                   # Sistema de NPCs
+│       ├── renderer.ts              # Three.js rendering
+│       ├── effects.ts               # Efectos visuales
+│       ├── audio.ts                 # Sistema de audio
+│       ├── spawner.ts               # Spawner de entidades
+│       └── types.ts                 # Tipos TypeScript
+├── docs/
+│   └── architecture/
+│       └── ARCHITECTURE-ANALYSIS.md # Análisis de arquitectura
+├── production/
+│   └── session-logs/
+│       └── session-log.md           # Logs de sesión
 ├── package.json
 ├── tsconfig.json
 ├── postcss.config.mjs
 ├── eslint.config.mjs
-├── vercel.json             # Configuración Vercel
-└── .gitignore              # Excluye .next/, node_modules/, etc.
+├── vercel.json                      # Configuración Vercel
+├── .gitignore
+├── PROYECTO-INFORME.md              # Este archivo
+└── PROYECTO-CONTEXTO.md             # Contexto y estado
 ```
 
 ---
@@ -60,6 +87,7 @@ Un sandbox en tiempo real de **Ragnarok Online** hecho con **Next.js 15 + Three.
 - Loop de juego con fixed timestep (60 FPS logic)
 - Cámara con seguimiento y screen shake
 - Renderizado por billboards (sprites 2D en 3D)
+- Dependency injection via GameContext
 
 ### 2. Combate (`combat.ts`)
 - Auto-combate con targeting
@@ -73,12 +101,14 @@ Un sandbox en tiempo real de **Ragnarok Online** hecho con **Next.js 15 + Three.
 - Virtual joystick opcional
 - Multitouch para combate simultáneo
 - Sistema de buffer de input (1200ms expiration)
+- EntityLookup interface (sin `as any`)
 
 ### 4. Estado (`state.ts`)
 - Store centralizado con Zustand
 - 4 clases de personaje: Lord Knight, High Priest, Assassin Cross, Sniper
 - Stats, EXP, skills, inventario, buffs
 - Diálogos NPC y sistema de log de combate
+- CharacterStats con bonuses de equipo
 
 ### 5. Rendering (`renderer.ts`)
 - Terreno con grid neón
@@ -89,6 +119,43 @@ Un sandbox en tiempo real de **Ragnarok Online** hecho con **Next.js 15 + Three.
 ### 6. Audio (`audio.ts`)
 - Efectos de sonido para combate
 - Audio ambiental
+
+### 7. Sistema de Inventario (`InventorySystem.ts`)
+- 30 slots máximo
+- Peso máximo: 2000 unidades (200kg)
+- Items stackables y no stackables
+- Sistema de Zeny (moneda)
+- Sort por tipo
+
+### 8. Sistema de Equipo (`EquipmentSystem.ts`)
+- 8 slots: head, body, weapon, shield, shoes, garment, accessory1, accessory2
+- Restricciones de nivel y clase
+- Bonuses de stats por equipo
+- Bonuses por refinamiento (+1 a +10)
+- Slots para cartas (preparado para futuro)
+
+### 9. Base de Datos de Items (`ItemDatabase.ts`)
+- 30+ items definidos
+- 6 pociones (Red, Orange, Yellow, White, Blue, Green)
+- 5 armas (Sword, Blade, Katar, Bow, Mace)
+- 5 armaduras (Cap, Cotton Shirt, Shield, Sandals, Muffler)
+- 4 accesorios (Ring, Necklace)
+- 4 headgears (Bunny Band, Ragnarok Crown, Magician Hat, Goggles)
+- 4 materiales (Jellopy, Sticky Mucus, Empty Bottle, MVP Coin)
+- 2 tipos de flechas (Arrow, Silver Arrow)
+- 3 items misc (Scell, Zealotus Mark)
+
+### 10. Sistemas Extraídos
+
+| Sistema | Archivo | Responsabilidad |
+|---------|---------|-----------------|
+| MonsterAI | `server/MonsterAI.ts` | AI de monstruos |
+| RegenSystem | `shared/RegenSystem.ts` | Regeneración HP/SP |
+| ProjectileSystem | `shared/ProjectileSystem.ts` | Física de proyectiles |
+| CooldownSystem | `shared/CooldownSystem.ts` | Battle mode, timers |
+| BuffSystem | `shared/BuffSystem.ts` | Gestión de buffs |
+| LootSystem | `shared/LootSystem.ts` | Física y pickup de loot |
+| PlayerController | `client/PlayerController.ts` | Movimiento/input del jugador |
 
 ---
 
@@ -110,7 +177,7 @@ Un sandbox en tiempo real de **Ragnarok Online** hecho con **Next.js 15 + Three.
 
 ## NPCs
 
-- Kafra (servicios)
+- Kafra (servicios: buff, heal, pociones)
 - Crusader Instructor (cambio de clase)
 
 ---
@@ -128,21 +195,36 @@ Un sandbox en tiempo real de **Ragnarok Online** hecho con **Next.js 15 + Three.
 
 ---
 
+## Arquitectura
+
+### Dependency Injection
+- GameContext con GameStoreAPI (interfaz)
+- createZustandGameStoreAPI() (implementación lazy)
+- Todos los sistemas reciben GameContext via constructor
+- Eliminado acoplamiento directo con useGameStore
+
+### Preparación para Networking
+- CommandQueue (command pattern)
+- EventBus (sistema de eventos desacoplado)
+- StateProvider (abstracción de state)
+- EntityLookup interface (para input handler)
+
+---
+
 ## Estado de Git
 
 | Campo | Valor |
 |-------|-------|
 | Branch | `main` |
-| Commits | 3 |
-| Último commit | `chore: add gitignore, vercel config, update session logs` |
-| Pendiente | `git push origin main` |
+| Último commit | Ver `git log` |
+| Estado | Sincronizado con origin |
 
 ---
 
 ## Configuración de Despliegue
 
 - **Plataforma**: Vercel
-- **Config**: `vercel.json` (básico)
+- **Config**: `vercel.json`
 - **Build**: `next build`
 - **Output**: `.next/`
 - **Variable de entorno**: `GEMINI_API_KEY` (según README)
@@ -154,11 +236,12 @@ Un sandbox en tiempo real de **Ragnarok Online** hecho con **Next.js 15 + Three.
 1. El proyecto ya está funcional y desplegable
 2. Usa App Router de Next.js (carpeta `app/`, no `pages/`)
 3. Three.js se inicializa solo en cliente (`useEffect` + `mounted` check)
-4. El store de Zustand es global y se accede con `useGameStore.getState()`
+4. Usa GameContext para dependency injection (no importar useGameStore directamente)
 5. No hay tests implementados aún
 6. No hay `.env.local` - necesita `GEMINI_API_KEY` según README
 7. Tailwind CSS v4 (usa `@tailwindcss/postcss` en lugar de config tradicional)
+8. lucide-react v1.17.0 (iconos actualizados para React 19)
 
 ---
 
-*Informe generado el 2026-05-29*
+*Informe generado el 2026-05-29 - Actualizado con sistemas de inventario y equipo*

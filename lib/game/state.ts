@@ -94,19 +94,23 @@ interface GameStoreState {
 const defaultStats: Record<JobClass, CharacterStats> = {
   'Lord Knight': {
     level: 99, jobLevel: 70, str: 85, agi: 65, vit: 80, int: 20, dex: 50, luk: 30,
-    atk: 340, def: 180, hit: 240, flee: 195, aspd: 168, maxHp: 18400, maxSp: 420
+    atk: 340, def: 180, hit: 240, flee: 195, aspd: 168, maxHp: 18400, maxSp: 420,
+    bonusAtk: 0, bonusDef: 0, bonusHit: 0, bonusFlee: 0, bonusAspd: 0, bonusMaxHp: 0, bonusMaxSp: 0, bonusCrit: 0
   },
   'High Priest': {
     level: 99, jobLevel: 70, str: 20, agi: 40, vit: 75, int: 99, dex: 70, luk: 15,
-    atk: 145, def: 150, hit: 210, flee: 175, aspd: 154, maxHp: 11200, maxSp: 1980
+    atk: 145, def: 150, hit: 210, flee: 175, aspd: 154, maxHp: 11200, maxSp: 1980,
+    bonusAtk: 0, bonusDef: 0, bonusHit: 0, bonusFlee: 0, bonusAspd: 0, bonusMaxHp: 0, bonusMaxSp: 0, bonusCrit: 0
   },
   'Assassin Cross': {
     level: 99, jobLevel: 70, str: 90, agi: 95, vit: 45, int: 15, dex: 45, luk: 40,
-    atk: 395, def: 95, hit: 235, flee: 285, aspd: 182, maxHp: 14200, maxSp: 510
+    atk: 395, def: 95, hit: 235, flee: 285, aspd: 182, maxHp: 14200, maxSp: 510,
+    bonusAtk: 0, bonusDef: 0, bonusHit: 0, bonusFlee: 0, bonusAspd: 0, bonusMaxHp: 0, bonusMaxSp: 0, bonusCrit: 0
   },
   'Sniper': {
     level: 99, jobLevel: 70, str: 30, agi: 90, vit: 40, int: 35, dex: 99, luk: 40,
-    atk: 360, def: 110, hit: 299, flee: 260, aspd: 178, maxHp: 12500, maxSp: 720
+    atk: 360, def: 110, hit: 299, flee: 260, aspd: 178, maxHp: 12500, maxSp: 720,
+    bonusAtk: 0, bonusDef: 0, bonusHit: 0, bonusFlee: 0, bonusAspd: 0, bonusMaxHp: 0, bonusMaxSp: 0, bonusCrit: 0
   }
 };
 

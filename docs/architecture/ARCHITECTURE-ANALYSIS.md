@@ -605,5 +605,48 @@ private handleMove(coords: { x: number; z: number }) {
 
 ---
 
+## 16. Progreso de Implementación (Actualizado 2026-05-29)
+
+### ✅ Fase 1: Boundaries (Completada)
+- [x] Crear estructura de directorios core/, shared/, client/, server/
+- [x] Crear GameCommand (command pattern)
+- [x] Crear EventBus (event system)
+- [x] Crear StateProvider (abstracción de state)
+- [x] Eliminar duplicado de worldRuntime.update()
+- [x] Eliminar acceso privado this.combatSystem['activeCast']
+- [x] Eliminar as any en input.ts (EntityLookup interface)
+
+### ✅ Fase 2: System Extraction (Completada)
+- [x] Extraer PlayerController de engine.ts
+- [x] Extraer MonsterAI de worldRuntime.ts
+- [x] Extraer RegenSystem de worldRuntime.ts
+- [x] Extraer ProjectileSystem de worldRuntime.ts
+- [x] Extraer CooldownSystem de worldRuntime.ts
+- [x] Extraer BuffSystem de worldRuntime.ts
+- [x] Extraer LootSystem de worldRuntime.ts
+- [x] Integrar todos los sistemas en worldRuntime
+
+### ✅ Fase 3: Dependency Injection (Completada)
+- [x] Crear GameContext con GameStoreAPI
+- [x] Crear createZustandGameStoreAPI()
+- [x] Refactorizar todos los sistemas para recibir GameContext
+- [x] Eliminar imports directos de useGameStore
+
+### ✅ Fase 4: Game Systems (Completada)
+- [x] Crear InventorySystem (RO style)
+- [x] Crear EquipmentSystem (8 slots, bonuses, refinement)
+- [x] Crear ItemDatabase (30+ items)
+- [x] Expandir CharacterStats con bonuses de equipo
+
+### 🔜 Pendiente
+- [ ] Integrar InventorySystem y EquipmentSystem con engine.ts
+- [ ] UI de inventario y equipo
+- [ ] Tests unitarios para sistemas
+- [ ] Serialization layer para networking
+- [ ] Client prediction + reconciliation
+
+---
+
 *Análisis generado el 2026-05-29*
+*Actualizado el 2026-05-29 con progreso de implementación*
 *Archivos analizados: engine.ts, combat.ts, worldRuntime.ts, input.ts, npc.ts, spawner.ts, state.ts, types.ts, renderer.ts, page.tsx*
