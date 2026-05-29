@@ -42,7 +42,7 @@ export interface StateProvider {
   getEntities(): Entity[];
   getMonsters(): Entity[];
   getNpcs(): Entity[];
-  getPlayerEntity(): Entity;
+  getPlayerEntity(): Entity | undefined;
 
   // Entity mutations (via events, not direct mutation)
   updateEntity(id: string, delta: Partial<Entity>): void;

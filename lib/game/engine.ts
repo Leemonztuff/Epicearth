@@ -8,6 +8,7 @@ import { CombatSystem } from './combat';
 import { NpcSystem } from './npc';
 import { EntitySpawner } from './spawner';
 import { EffectsSystem } from './effects';
+import { PlayerController } from './client/PlayerController';
 import { Entity, GroundItem, HeadgearId, Projectile } from './types';
 
 // ============================================================================
@@ -35,6 +36,7 @@ export class RagnarokEngine implements EntityLookup {
   private combatSystem!: CombatSystem;
   private npcSystem!: NpcSystem;
   private effectsSystem!: EffectsSystem;
+  private playerController!: PlayerController;
 
   // Entities
   private playerEntity!: Entity;
@@ -174,6 +176,14 @@ export class RagnarokEngine implements EntityLookup {
       onScreenShake: (intensity) => { this.screenShakeIntensity = intensity; }
     });
 
+    // Init Player Controller (extracted from engine)
+    this.playerController = new PlayerController(
+      this.playerEntity, this.monsters, this.npcs, this.combatSystem, this.effectsSystem
+    );
+    this.playerController.setCallbacks({
+      onNpcInteract: (npc) => this.handleNpcInteract(npc)
+    });
+
     // Init NPC System
     this.npcSystem = new NpcSystem(this.playerEntity, this.npcs);
     this.npcSystem.setCallbacks({
@@ -186,51 +196,12 @@ export class RagnarokEngine implements EntityLookup {
       this.renderer, this, this.playerEntity, this.monsters, this.npcs, this.groundItems
     );
     this.inputHandler.setCallbacks({
-      onMove: (coords) => this.handleMove(coords),
-      onTarget: (targetId) => this.handleTarget(targetId),
+      onMove: (coords) => this.playerController.handleMove(coords),
+      onTarget: (targetId) => this.playerController.handleTarget(targetId),
       onNpcInteract: (npc) => this.handleNpcInteract(npc)
     });
 
     this.updateBillboards();
-  }
-
-  // --- 4. INPUT HANDLERS ---
-  private handleMove(coords: { x: number; z: number }) {
-    if (this.playerEntity.state === 'death') return;
-
-    // Cancel active casting via proper method (no direct private access)
-    if (this.combatSystem.getActiveCast()) {
-      this.combatSystem.cancelCast('movement');
-    }
-
-    this.playerEntity.targetX = coords.x;
-    this.playerEntity.targetZ = coords.z;
-    this.playerEntity.state = 'move';
-    this.inputHandler.setInteractingNpcId(null);
-
-    this.effectsSystem.spawnTouchIndicator(coords.x, coords.z, 'move');
-  }
-
-  private handleTarget(targetId: string) {
-    const store = useGameStore.getState();
-    const mob = this.monsters.find(m => m.id === targetId);
-    if (mob && mob.currentHp > 0) {
-      this.playerEntity.targetEntityId = mob.id;
-      this.playerEntity.facing = mob.x < this.playerEntity.x ? 'left' : 'right';
-      store.setTarget(mob.id, mob.name, mob.currentHp, mob.maxHp);
-      store.addCombatLog(`Target lock: enfocando en [${mob.name}] LV: 45.`, 'system');
-      this.effectsSystem.spawnTouchIndicator(mob.x, mob.z, 'target');
-    }
-  }
-
-  private handleNpcInteract(npc: Entity) {
-    const store = useGameStore.getState();
-    const dialogue = this.npcSystem.openDialogue(npc);
-    if (dialogue) {
-      store.setNpcDialogue(dialogue);
-      this.effectsSystem.spawnTouchIndicator(npc.x, npc.z, 'target');
-      store.addCombatLog(`Caminando hacia ${npc.name}...`, 'system');
-    }
   }
 
   // --- 5. MAIN UPDATE LOOP ---
@@ -265,11 +236,24 @@ export class RagnarokEngine implements EntityLookup {
     // 2. World Runtime update (AI, projectiles, buffs, regen, loot)
     this.worldRuntime.update(dt, now);
 
-    // 3. Player movement
-    this.tickPlayerMovement(dt, tickScale, now);
+    // 3. Player movement (delegated to PlayerController)
+    this.playerController.tickJoystickMovement(dt, tickScale);
+    this.playerController.tickTouchMovement(dt, tickScale);
 
-    // 4. NPC proximity check
-    this.tickNpcProximity();
+    // 4. NPC proximity check (delegated to PlayerController)
+    this.playerController.tickNpcProximity(this.inputHandler.getInteractingNpcId());
+    if (this.inputHandler.getInteractingNpcId()) {
+      // Check if proximity check handled the interaction
+      const npc = this.npcs.find(n => n.id === this.inputHandler.getInteractingNpcId());
+      if (npc) {
+        const dist = Math.sqrt(
+          (npc.x - this.playerEntity.x) ** 2 + (npc.z - this.playerEntity.z) ** 2
+        );
+        if (dist < 1.95) {
+          this.inputHandler.setInteractingNpcId(null);
+        }
+      }
+    }
 
     // 5. Animation timers
     this.playerEntity.animationTimer += dt;
@@ -277,79 +261,6 @@ export class RagnarokEngine implements EntityLookup {
 
     // 6. Sync store
     store.setPlayerHpSp(this.playerEntity.currentHp, this.playerEntity.currentSp);
-  }
-
-  private tickPlayerMovement(dt: number, tickScale: number, now: number) {
-    if (this.playerEntity.state === 'death') return;
-    const store = useGameStore.getState();
-
-    // Joystick movement
-    if (store.isJoystickEnabled && store.joystick.isActive) {
-      // Cancel active casting via proper method
-      if (this.combatSystem.getActiveCast()) {
-        this.combatSystem.cancelCast('movement');
-      }
-
-      this.playerEntity.targetX = undefined;
-      this.playerEntity.targetZ = undefined;
-      this.inputHandler.setInteractingNpcId(null);
-      this.playerEntity.state = 'move';
-
-      const angle = store.joystick.angle;
-      const mag = store.joystick.distance / 60;
-      const speed = (0.13 + store.stats.agi * 0.0018) * mag * tickScale;
-
-      this.playerEntity.x += Math.cos(angle) * speed;
-      this.playerEntity.z += Math.sin(angle) * speed;
-      this.playerEntity.facing = Math.cos(angle) > 0 ? 'right' : 'left';
-      this.playerEntity.y = 0;
-      return;
-    }
-
-    // Touch click movement
-    if (this.playerEntity.targetX !== undefined && this.playerEntity.targetZ !== undefined) {
-      const dx = this.playerEntity.targetX - this.playerEntity.x;
-      const dz = this.playerEntity.targetZ - this.playerEntity.z;
-      const dist = Math.sqrt(dx * dx + dz * dz);
-
-      if (dist > 0.3) {
-        this.playerEntity.facing = dx > 0 ? 'right' : 'left';
-        const walkSpeed = (0.13 + store.stats.agi * 0.0018) * tickScale;
-        this.playerEntity.x += (dx / dist) * walkSpeed;
-        this.playerEntity.z += (dz / dist) * walkSpeed;
-        this.playerEntity.y = 0;
-      } else {
-        this.playerEntity.state = 'idle';
-        this.playerEntity.targetX = undefined;
-        this.playerEntity.targetZ = undefined;
-      }
-    }
-  }
-
-  private tickNpcProximity() {
-    const interactingNpcId = this.inputHandler.getInteractingNpcId();
-    if (!interactingNpcId) return;
-
-    const npc = this.npcs.find(n => n.id === interactingNpcId);
-    if (!npc) return;
-
-    const dist = Math.sqrt(
-      (npc.x - this.playerEntity.x) ** 2 + (npc.z - this.playerEntity.z) ** 2
-    );
-
-    if (dist < 1.95) {
-      this.playerEntity.state = 'idle';
-      this.playerEntity.targetX = undefined;
-      this.playerEntity.targetZ = undefined;
-      this.playerEntity.facing = npc.x > this.playerEntity.x ? 'right' : 'left';
-      this.inputHandler.setInteractingNpcId(null);
-
-      const store = useGameStore.getState();
-      const dialogue = this.npcSystem.openDialogue(npc);
-      if (dialogue) {
-        store.setNpcDialogue(dialogue);
-      }
-    }
   }
 
   // --- 6. RENDER TICK ---
@@ -459,27 +370,24 @@ export class RagnarokEngine implements EntityLookup {
     sprite.position.set(entity.x, entity.y + (entity.type === 'boss_mvp' ? 2.0 : 0.9), entity.z);
   }
 
-  // --- 8. PUBLIC API ---
+  // --- 8. NPC INTERACTION ---
+  private handleNpcInteract(npc: Entity) {
+    const store = useGameStore.getState();
+    const dialogue = this.npcSystem.openDialogue(npc);
+    if (dialogue) {
+      store.setNpcDialogue(dialogue);
+      this.effectsSystem.spawnTouchIndicator(npc.x, npc.z, 'target');
+      store.addCombatLog(`Caminando hacia ${npc.name}...`, 'system');
+    }
+  }
+
+  // --- 9. PUBLIC API ---
   handleNpcAction(npcId: string, actionParam: string) {
     this.npcSystem.handleAction(npcId, actionParam);
   }
 
   revivePlayer() {
-    const store = useGameStore.getState();
-    this.playerEntity.state = 'idle';
-    this.playerEntity.x = 0;
-    this.playerEntity.z = 0;
-    this.playerEntity.y = 0;
-    this.playerEntity.targetX = undefined;
-    this.playerEntity.targetZ = undefined;
-    this.playerEntity.targetEntityId = null;
-    this.playerEntity.currentHp = store.stats.maxHp;
-    this.playerEntity.currentSp = store.stats.maxSp;
-
-    store.setPlayerHpSp(this.playerEntity.currentHp, this.playerEntity.currentSp);
-    store.setTarget(null);
-    store.addCombatLog('✨ Has revivido en las coordenadas centrales de Prontera. ¡A batallar! ✨', 'system');
-    gameAudio.playHeal();
+    this.playerController.revivePlayer();
   }
 
   castSkill(skillId: string) {
